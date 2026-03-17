@@ -274,6 +274,12 @@ class RentabilityAnalysisApp(tk.Tk):
         self.results_text.delete("1.0", tk.END)
         self.results_text.config(state=tk.DISABLED)
 
+    def render_statistics(self, lines: list[str]) -> None:
+        self.results_text.config(state=tk.NORMAL)
+        self.results_text.delete("1.0", tk.END)
+        self.results_text.insert(tk.END, "\n".join(lines))
+        self.results_text.config(state=tk.DISABLED)
+
     def set_period_to_full_range(self, enterprise: Enterprise) -> None:
         start_date, end_date = self.repository.get_record_date_bounds(enterprise.id)
         self.period_start_var.set(start_date.strftime("%Y-%m-%d") if start_date else "")
@@ -543,20 +549,48 @@ class RentabilityAnalysisApp(tk.Tk):
             if p_value >= alpha
             else "Не рекомендуется к инвестированию"
         )
+        profits = [record.net_profit for record in self.current_records]
+        avg_profit = sum(profits) / len(profits)
+        min_ros = min(ros_values)
+        max_ros = max(ros_values)
+        hypothesis_text = (
+            f"H0: средний ROS не ниже целевого уровня {target_ros:.1f}%.\n"
+            f"H1: средний ROS ниже целевого уровня {target_ros:.1f}%."
+        )
+        verdict_explanation = (
+            "p-уровень не меньше α, поэтому статистически недостаточно оснований "
+            "считать, что средний ROS ниже целевого."
+            if p_value >= alpha
+            else "p-уровень меньше α, поэтому есть статистические основания "
+            "считать, что средний ROS ниже целевого."
+        )
 
         result_lines = [
-            f"Средняя ROS: {avg_ros:.1f}%",
-            f"Стандартное отклонение: {std_ros:.1f}%",
+            "Статистические показатели",
+            f"Периодов в расчёте: {len(self.current_records)}",
+            f"Период анализа: {self.current_records[0].period_date.strftime('%d.%m.%Y')} - "
+            f"{self.current_records[-1].period_date.strftime('%d.%m.%Y')}",
+            "",
+            "Что было рассчитано:",
+            f"Средняя чистая прибыль: {avg_profit:,.0f} ₽",
+            f"Средняя ROS: {avg_ros:.1f}% "
+            f"(ROS = чистая прибыль / выручка * 100)",
+            f"Минимальный ROS: {min_ros:.1f}%",
+            f"Максимальный ROS: {max_ros:.1f}%",
+            f"Стандартное отклонение ROS: {std_ros:.1f}% "
+            f"(показывает, насколько ROS колебался от периода к периоду)",
+            "",
+            "Проверка гипотезы:",
+            hypothesis_text,
             f"t-статистика: {t_stat:.2f}",
             f"p-уровень: {p_value:.3f}",
-            f"Гипотеза: ROS >= {target_ros}%",
-            f"Вердикт гипотезы: {verdict}",
-            f"Рекомендация: {recommendation}",
+            f"Уровень значимости α: {alpha:.2f}",
+            f"Вердикт: {verdict}",
+            verdict_explanation,
+            "",
+            f"Практический вывод: {recommendation}",
         ]
-        self.results_text.config(state=tk.NORMAL)
-        self.results_text.delete("1.0", tk.END)
-        self.results_text.insert(tk.END, "\n".join(result_lines))
-        self.results_text.config(state=tk.DISABLED)
+        self.render_statistics(result_lines)
 
         self.analysis_result = {
             "avg_ros": avg_ros,
