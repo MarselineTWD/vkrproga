@@ -93,6 +93,12 @@ class PostgresRepository:
             conn.commit()
         return Enterprise(id=row[0], name=row[1])
 
+    def delete_enterprise(self, enterprise_id: int) -> None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM enterprises WHERE id = %s", (enterprise_id,))
+            conn.commit()
+
     def update_enterprise_name(self, enterprise_id: int, name: str) -> Enterprise:
         with self.connection() as conn:
             with conn.cursor() as cur:
@@ -276,3 +282,40 @@ class PostgresRepository:
         existing.tax = record.tax
         self.update_record(existing)
         return existing
+
+    def upsert_records(self, records: list[FinancialRecord]) -> None:
+        if not records:
+            return
+
+        params = [
+            (
+                record.enterprise_id,
+                record.period_date,
+                record.revenue,
+                record.cost,
+                record.fixed_expenses,
+                record.variable_expenses,
+                record.tax,
+            )
+            for record in records
+        ]
+
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO enterprise_metrics (
+                        enterprise_id, period_date, revenue, cost, fixed_expenses, variable_expenses, tax
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (enterprise_id, period_date)
+                    DO UPDATE SET
+                        revenue = EXCLUDED.revenue,
+                        cost = EXCLUDED.cost,
+                        fixed_expenses = EXCLUDED.fixed_expenses,
+                        variable_expenses = EXCLUDED.variable_expenses,
+                        tax = EXCLUDED.tax
+                    """,
+                    params,
+                )
+            conn.commit()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tkinter as tk
 from datetime import date, datetime
 from tkinter import filedialog, messagebox, ttk
@@ -30,24 +31,36 @@ TABLE_COLUMNS = (
 IMPORT_COLUMN_ALIASES = {
     "enterprise": "enterprise_name",
     "enterprise_name": "enterprise_name",
+    "enterprise_title": "enterprise_name",
     "name": "enterprise_name",
     "предприятие": "enterprise_name",
     "название": "enterprise_name",
     "date": "period_date",
     "period_date": "period_date",
     "period": "period_date",
+    "report_date": "period_date",
     "дата": "period_date",
     "revenue": "revenue",
+    "income": "revenue",
+    "sales": "revenue",
     "выручка": "revenue",
     "cost": "cost",
+    "costs": "cost",
+    "cost_price": "cost",
+    "prime_cost": "cost",
     "себестоимость": "cost",
     "fixed_expenses": "fixed_expenses",
+    "fixed_costs": "fixed_expenses",
+    "fixed": "fixed_expenses",
     "постоянные издержки": "fixed_expenses",
     "пост_издержки": "fixed_expenses",
     "variable_expenses": "variable_expenses",
+    "variable_costs": "variable_expenses",
+    "variable": "variable_expenses",
     "переменные издержки": "variable_expenses",
     "перем_издержки": "variable_expenses",
     "tax": "tax",
+    "taxes": "tax",
     "налог": "tax",
 }
 
@@ -88,17 +101,19 @@ class RentabilityAnalysisApp(tk.Tk):
         self.modal_overlay: tk.Toplevel | None = None
 
         self.enterprise_var = tk.StringVar()
+        self.period_mode_var = tk.StringVar(value="Все данные")
         self.period_start_var = tk.StringVar()
         self.period_end_var = tk.StringVar()
         self.target_ros_var = tk.StringVar(value="10.0")
         self.alpha_var = tk.StringVar(value="0.05")
-        self.graph_tick_mode_var = tk.StringVar(value="auto")
+        self.graph_tick_mode_var = tk.StringVar(value="Авто")
 
         self.fig_metrics: Figure | None = None
         self.canvas_metrics: FigureCanvasTkAgg | None = None
         self.metrics_axes: tuple | None = None
         self.drag_state: dict[str, float] | None = None
         self.graph_widget: tk.Widget | None = None
+        self.suppress_tree_event = False
 
         self.create_widgets()
         self.update_enterprise_list()
@@ -142,12 +157,22 @@ class RentabilityAnalysisApp(tk.Tk):
         results_frame = ttk.LabelFrame(parent, text="Статистические показатели")
         results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
+        results_actions = ttk.Frame(results_frame)
+        results_actions.pack(fill=tk.X, padx=5, pady=(5, 0))
+        ttk.Button(
+            results_actions,
+            text="Рассчитать показатели",
+            command=self.test_hypothesis,
+        ).pack(side=tk.LEFT, padx=2)
+
         self.results_text = tk.Text(
             results_frame,
-            height=8,
-            font=("Courier New", 9),
+            height=11,
+            font=("Segoe UI", 11),
             state=tk.DISABLED,
             wrap=tk.WORD,
+            padx=8,
+            pady=8,
         )
         results_scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_text.yview)
         self.results_text.configure(yscrollcommand=results_scrollbar.set)
@@ -174,15 +199,34 @@ class RentabilityAnalysisApp(tk.Tk):
             text="Добавить предприятие",
             command=self.add_enterprise,
         ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            enterprise_frame,
+            text="Удалить предприятие",
+            command=self.delete_enterprise,
+        ).pack(side=tk.LEFT, padx=2)
 
         row1 = ttk.Frame(settings_frame)
         row1.pack(fill=tk.X, padx=10, pady=5)
         ttk.Label(row1, text="Дата анализа:").pack(side=tk.LEFT)
         ttk.Label(row1, text=datetime.now().strftime("%d.%m.%Y")).pack(side=tk.LEFT, padx=5)
-        ttk.Label(row1, text="Период: с").pack(side=tk.LEFT, padx=(20, 5))
-        ttk.Entry(row1, textvariable=self.period_start_var, width=12).pack(side=tk.LEFT, padx=5)
-        ttk.Label(row1, text="по").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(row1, textvariable=self.period_end_var, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Label(row1, text="Период:").pack(side=tk.LEFT, padx=(20, 5))
+        period_mode_combo = ttk.Combobox(
+            row1,
+            textvariable=self.period_mode_var,
+            state="readonly",
+            width=12,
+            values=("Все данные", "Период"),
+        )
+        period_mode_combo.pack(side=tk.LEFT, padx=5)
+        period_mode_combo.bind("<<ComboboxSelected>>", self.on_period_mode_change)
+
+        self.period_range_frame = ttk.Frame(row1)
+        self.period_range_frame.pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(self.period_range_frame, text="с").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Entry(self.period_range_frame, textvariable=self.period_start_var, width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.period_range_frame, text="по").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(self.period_range_frame, textvariable=self.period_end_var, width=12).pack(side=tk.LEFT, padx=5)
+        self._update_period_mode_ui()
 
         row2 = ttk.Frame(settings_frame)
         row2.pack(fill=tk.X, padx=10, pady=5)
@@ -194,7 +238,6 @@ class RentabilityAnalysisApp(tk.Tk):
         button_frame = ttk.Frame(settings_frame)
         button_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
         ttk.Button(button_frame, text="Вывести данные", command=self.show_data).pack(side=tk.LEFT, padx=2)
-        ttk.Button(button_frame, text="Проверить гипотезу", command=self.test_hypothesis).pack(side=tk.LEFT, padx=2)
         ttk.Button(button_frame, text="Сохранить отчёт", command=self.save_report).pack(side=tk.LEFT, padx=2)
 
     def _create_graph_panel(self, parent: ttk.Frame) -> None:
@@ -209,13 +252,13 @@ class RentabilityAnalysisApp(tk.Tk):
             textvariable=self.graph_tick_mode_var,
             state="readonly",
             width=20,
-            values=("auto", "monthly", "every_2_months"),
+            values=("Авто", "Каждый месяц", "Через 2 месяца"),
         )
         tick_mode_combo.pack(side=tk.LEFT, padx=6)
         tick_mode_combo.bind("<<ComboboxSelected>>", self.on_graph_tick_mode_change)
         ttk.Label(
             graph_controls,
-            text="auto / monthly / every_2_months",
+            text="Авто / Каждый месяц / Через 2 месяца",
         ).pack(side=tk.LEFT, padx=6)
 
         self.fig_metrics = Figure(figsize=(8, 6), dpi=100)
@@ -341,6 +384,7 @@ class RentabilityAnalysisApp(tk.Tk):
     def clear_graphs_only(self) -> None:
         if self.fig_metrics and self.canvas_metrics:
             self.fig_metrics.clear()
+            self.metrics_axes = None
             self.canvas_metrics.draw()
 
     def show_data(self) -> None:
@@ -349,34 +393,38 @@ class RentabilityAnalysisApp(tk.Tk):
             self.clear_results()
             return
 
-        if not self.period_start_var.get().strip() or not self.period_end_var.get().strip():
-            self.set_period_to_full_range(enterprise)
+        if self.period_mode_var.get() == "Все данные":
+            start_date = None
+            end_date = None
+        else:
+            if not self.period_start_var.get().strip() or not self.period_end_var.get().strip():
+                self.set_period_to_full_range(enterprise)
 
-        if not self.period_start_var.get().strip() and not self.period_end_var.get().strip():
-            self.current_enterprise = enterprise
-            self.tree.delete(*self.tree.get_children())
-            self.current_records = []
-            self.selected_record_id = None
-            self.clear_graphs_only()
-            self.clear_statistics()
-            return
+            if not self.period_start_var.get().strip() and not self.period_end_var.get().strip():
+                self.current_enterprise = enterprise
+                self.tree.delete(*self.tree.get_children())
+                self.current_records = []
+                self.selected_record_id = None
+                self.clear_graphs_only()
+                self.clear_statistics()
+                return
 
-        try:
-            start_date = self.parse_date_string(self.period_start_var.get())
-            end_date = self.parse_date_string(self.period_end_var.get())
-            if not start_date or not end_date:
-                raise ValueError("Некорректный формат даты")
-            if start_date > end_date:
-                raise ValueError("Начальная дата не может быть позже конечной")
-        except ValueError as exc:
-            messagebox.showerror(
-                "Ошибка даты",
-                "Некорректный формат даты.\n"
-                "Используйте ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\n\n"
-                f"Текст ошибки: {exc}",
-            )
-            self.clear_results()
-            return
+            try:
+                start_date = self.parse_date_string(self.period_start_var.get())
+                end_date = self.parse_date_string(self.period_end_var.get())
+                if not start_date or not end_date:
+                    raise ValueError("Некорректный формат даты")
+                if start_date > end_date:
+                    raise ValueError("Начальная дата не может быть позже конечной")
+            except ValueError as exc:
+                messagebox.showerror(
+                    "Ошибка даты",
+                    "Некорректный формат даты.\n"
+                    "Используйте ДД.ММ.ГГГГ или ГГГГ-ММ-ДД.\n\n"
+                    f"Текст ошибки: {exc}",
+                )
+                self.clear_results()
+                return
 
         self.current_enterprise = enterprise
         self.current_records = self.repository.get_records(enterprise.id, start_date, end_date)
@@ -399,31 +447,37 @@ class RentabilityAnalysisApp(tk.Tk):
                 ),
             )
 
+        self._sync_tree_selection()
         if self.current_records:
             self.plot_graphs()
         else:
             self.clear_graphs_only()
             self.clear_statistics()
 
-    def plot_graphs(self) -> None:
+    def _update_period_mode_ui(self) -> None:
+        if self.period_mode_var.get() == "Период":
+            self.period_range_frame.pack(side=tk.LEFT, padx=(10, 0))
+        else:
+            self.period_range_frame.pack_forget()
+
+    def on_period_mode_change(self, _event) -> None:
+        self._update_period_mode_ui()
+        enterprise = self.get_selected_enterprise()
+        if enterprise and self.period_mode_var.get() == "Период":
+            self.set_period_to_full_range(enterprise)
+        self.show_data()
+
+    def plot_graphs(self, preserve_view: bool = False) -> None:
         if not self.current_records or not self.fig_metrics or not self.canvas_metrics:
             return
 
+        current_xlim = None
+        if preserve_view and self.metrics_axes:
+            current_xlim = self.metrics_axes[0].get_xlim()
+
         x_indices = list(range(1, len(self.current_records) + 1))
-        labels = [record.period_date.strftime("%m/%y") for record in self.current_records]
         profits = [record.net_profit for record in self.current_records]
         ros_values = [record.ros for record in self.current_records]
-        tick_mode = self.graph_tick_mode_var.get()
-        if tick_mode == "monthly":
-            tick_step = 1
-        elif tick_mode == "every_2_months":
-            tick_step = 2
-        else:
-            tick_step = max(1, len(self.current_records) // 8)
-        tick_positions = x_indices[::tick_step]
-        if tick_positions[-1] != x_indices[-1]:
-            tick_positions.append(x_indices[-1])
-        tick_labels = [labels[position - 1] for position in tick_positions]
 
         self.fig_metrics.clear()
         ax1 = self.fig_metrics.add_subplot(111)
@@ -451,44 +505,51 @@ class RentabilityAnalysisApp(tk.Tk):
             label="ROS",
         )
 
+        selected_index = self._get_selected_record_index()
+        if selected_index is not None:
+            selected_x = x_indices[selected_index]
+            ax1.scatter(
+                [selected_x],
+                [profits[selected_index]],
+                s=120,
+                color="#0b3d91",
+                edgecolors="white",
+                linewidths=1.5,
+                zorder=5,
+            )
+            ax2.scatter(
+                [selected_x],
+                [ros_values[selected_index]],
+                s=120,
+                color="#a61e11",
+                edgecolors="white",
+                linewidths=1.5,
+                zorder=5,
+            )
+            ax1.axvline(selected_x, color="#6c757d", linestyle=":", linewidth=1.2, alpha=0.7, zorder=0)
+
         ax1.set_xlabel("Период", fontsize=9)
         ax1.set_ylabel("Чистая прибыль, ₽", fontsize=9)
         ax2.set_ylabel("ROS, %", fontsize=9)
         ax1.grid(True, alpha=0.3)
-        ax1.set_xticks(tick_positions)
-        ax1.set_xticklabels(tick_labels, rotation=45, fontsize=8)
         ax1.margins(x=0.04, y=0.18)
         ax2.margins(y=0.18)
-
-        for index, (x_value, y_value) in enumerate(zip(x_indices, profits), start=1):
-            if index in tick_positions:
-                ax1.annotate(
-                    f"{y_value / 1000:,.0f}K",
-                    xy=(x_value, y_value),
-                    xytext=(0, -12),
-                    textcoords="offset points",
-                    ha="center",
-                    va="top",
-                    fontsize=7,
-                    color="#1f5aa6",
-                )
-
-        for index, (x_value, y_value) in enumerate(zip(x_indices, ros_values), start=1):
-            if index in tick_positions:
-                ax2.annotate(
-                    f"{y_value:.1f}%",
-                    xy=(x_value, y_value),
-                    xytext=(0, 8),
-                    textcoords="offset points",
-                    ha="center",
-                    va="bottom",
-                    fontsize=7,
-                    color="#c0392b",
-                )
 
         ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{value / 1000:,.0f}K"))
         ax1.tick_params(axis="y", labelsize=8)
         ax2.tick_params(axis="y", labelsize=8)
+        if current_xlim is None:
+            x_min, x_max = 0.5, len(self.current_records) + 0.5
+        else:
+            data_min = 0.5
+            data_max = len(self.current_records) + 0.5
+            x_min = max(data_min, min(current_xlim[0], data_max))
+            x_max = max(data_min, min(current_xlim[1], data_max))
+            if x_max <= x_min:
+                x_min, x_max = data_min, data_max
+        ax1.set_xlim(x_min, x_max)
+        ax2.set_xlim(x_min, x_max)
+        self._update_graph_x_ticks()
 
         try:
             target_ros = float(self.target_ros_var.get())
@@ -518,6 +579,62 @@ class RentabilityAnalysisApp(tk.Tk):
 
         self.fig_metrics.subplots_adjust(top=0.9, left=0.1, right=0.9, bottom=0.16)
         self.canvas_metrics.draw()
+
+    def _get_selected_record_index(self) -> int | None:
+        if self.selected_record_id is None:
+            return None
+        for index, record in enumerate(self.current_records):
+            if record.id == self.selected_record_id:
+                return index
+        return None
+
+    def _update_graph_x_ticks(self) -> None:
+        if not self.metrics_axes or not self.current_records:
+            return
+
+        ax1, ax2 = self.metrics_axes
+        x_min, x_max = ax1.get_xlim()
+        visible_start = max(1, int(round(x_min)))
+        visible_end = min(len(self.current_records), int(round(x_max)))
+        visible_count = max(1, visible_end - visible_start + 1)
+        tick_mode = self.graph_tick_mode_var.get()
+        if tick_mode == "Каждый месяц":
+            tick_step = 1
+        elif tick_mode == "Через 2 месяца":
+            tick_step = 2
+        else:
+            tick_step = max(1, visible_count // 10)
+
+        tick_positions = list(range(visible_start, visible_end + 1, tick_step))
+        if not tick_positions or tick_positions[-1] != visible_end:
+            tick_positions.append(visible_end)
+        tick_labels = [self.current_records[position - 1].period_date.strftime("%m.%y") for position in tick_positions]
+        ax1.set_xticks(tick_positions)
+        ax1.set_xticklabels(tick_labels, rotation=35, ha="right", fontsize=8)
+        ax2.set_xticks(tick_positions)
+        self.fig_metrics.tight_layout(rect=(0.02, 0.03, 0.98, 0.94))
+        self.fig_metrics.subplots_adjust(top=0.9)
+
+    def _sync_tree_selection(self) -> None:
+        selected_iid = str(self.selected_record_id) if self.selected_record_id is not None else ""
+        current_items = set(self.tree.get_children())
+        self.suppress_tree_event = True
+        try:
+            if selected_iid and selected_iid in current_items:
+                self.tree.selection_set(selected_iid)
+                self.tree.focus(selected_iid)
+                self.tree.see(selected_iid)
+            else:
+                self.tree.selection_remove(*self.tree.selection())
+        finally:
+            self.suppress_tree_event = False
+
+    def _select_record_by_index(self, index: int) -> None:
+        if index < 0 or index >= len(self.current_records):
+            return
+        self.selected_record_id = self.current_records[index].id
+        self._sync_tree_selection()
+        self.plot_graphs(preserve_view=True)
 
     def test_hypothesis(self) -> None:
         if len(self.current_records) < 2:
@@ -705,6 +822,32 @@ class RentabilityAnalysisApp(tk.Tk):
         if enterprise:
             self.open_record_dialog(enterprise)
 
+    def delete_enterprise(self) -> None:
+        enterprise = self.get_selected_enterprise()
+        if not enterprise:
+            return
+
+        confirmed = messagebox.askyesno(
+            "Удалить предприятие",
+            f"Удалить предприятие «{enterprise.name}»?\nВсе его показатели тоже будут удалены.",
+        )
+        if not confirmed:
+            return
+
+        self.repository.delete_enterprise(enterprise.id)
+        self.update_enterprise_list()
+        if self.enterprise_var.get() == enterprise.name:
+            names = list(self.enterprise_by_name.keys())
+            self.enterprise_var.set(names[0] if names else "")
+        self.selected_record_id = None
+        self.current_enterprise = None
+        self.current_records = []
+        self.clear_statistics()
+        self.tree.delete(*self.tree.get_children())
+        self.clear_graphs_only()
+        if self.enterprise_var.get():
+            self.refresh_current_view(rerun_analysis=False)
+
     def import_data(self) -> None:
         file_path = filedialog.askopenfilename(
             title="Импорт данных",
@@ -717,10 +860,28 @@ class RentabilityAnalysisApp(tk.Tk):
         if not file_path:
             return
 
+        enterprise = self.get_selected_enterprise()
+        if not enterprise:
+            return
+
         try:
+            self.config(cursor="watch")
+            self.update_idletasks()
             dataframe = self._read_import_dataframe(file_path)
-            dataframe = self._normalize_import_dataframe(dataframe)
-            imported_enterprises, imported_dates = self._save_imported_dataframe(dataframe)
+            dataframe = self._normalize_import_dataframe(dataframe, enterprise)
+            overlapping_dates = self._find_existing_import_dates(dataframe, enterprise)
+            if overlapping_dates:
+                overlap_preview = self._format_import_date_ranges(overlapping_dates)
+                confirmed = messagebox.askyesno(
+                    "Подтвердите перезапись",
+                    f"Будут перезаписаны уже существующие месяцы: {len(overlapping_dates)} шт.\n\n"
+                    "Периоды:\n"
+                    f"{overlap_preview}\n\n"
+                    "Продолжить импорт?",
+                )
+                if not confirmed:
+                    return
+            imported_enterprises, imported_dates = self._save_imported_dataframe(dataframe, enterprise)
         except ValueError as exc:
             messagebox.showerror("Ошибка импорта", str(exc))
             return
@@ -730,14 +891,14 @@ class RentabilityAnalysisApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("Ошибка импорта", f"Не удалось импортировать файл:\n{exc}")
             return
+        finally:
+            self.config(cursor="")
 
         self.update_enterprise_list()
-        if len(imported_enterprises) == 1:
-            enterprise_name = next(iter(imported_enterprises))
-            self.enterprise_var.set(enterprise_name)
-            enterprise = self.enterprise_by_name.get(enterprise_name)
-            if enterprise:
-                self.set_period_to_full_range(enterprise)
+        self.enterprise_var.set(enterprise.name)
+        enterprise = self.enterprise_by_name.get(enterprise.name)
+        if enterprise:
+            self.set_period_to_full_range(enterprise)
 
         if imported_dates:
             self.period_start_var.set(min(imported_dates).strftime("%Y-%m-%d"))
@@ -748,7 +909,7 @@ class RentabilityAnalysisApp(tk.Tk):
         messagebox.showinfo(
             "Импорт завершён",
             f"Импортировано строк: {len(imported_dates)}\n"
-            f"Предприятий затронуто: {len(imported_enterprises)}",
+            f"Предприятие: {enterprise.name}",
         )
 
     def edit_data(self) -> None:
@@ -776,14 +937,13 @@ class RentabilityAnalysisApp(tk.Tk):
             return pd.read_excel(file_path)
         raise ValueError("Поддерживаются только файлы CSV и Excel")
 
-    def _normalize_import_dataframe(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+    def _normalize_import_dataframe(self, dataframe: pd.DataFrame, enterprise: Enterprise) -> pd.DataFrame:
         if dataframe.empty:
             raise ValueError("Файл импорта пуст")
 
         normalized_columns: dict[str, str] = {}
         for column in dataframe.columns:
-            normalized_key = str(column).strip().lower().replace("ё", "е")
-            normalized_key = normalized_key.replace(" ", "_")
+            normalized_key = self._normalize_import_column_name(column)
             normalized_columns[column] = IMPORT_COLUMN_ALIASES.get(normalized_key, normalized_key)
 
         dataframe = dataframe.rename(columns=normalized_columns)
@@ -800,32 +960,96 @@ class RentabilityAnalysisApp(tk.Tk):
             missing_list = ", ".join(sorted(missing_columns))
             raise ValueError(f"В файле не хватает обязательных колонок: {missing_list}")
 
-        if "enterprise_name" not in dataframe.columns:
-            enterprise = self.get_selected_enterprise()
-            if not enterprise:
-                raise ValueError("Выберите предприятие или добавьте колонку enterprise_name в файл")
-            dataframe["enterprise_name"] = enterprise.name
+        dataframe["enterprise_name"] = enterprise.name
+
+        period_dates = dataframe["period_date"].apply(self._parse_import_period_date)
+        invalid_rows = dataframe.index[period_dates.isna()].tolist()
+        if invalid_rows:
+            raise ValueError(f"Ошибка в строке {invalid_rows[0] + 2}: Некорректная дата")
+        dataframe["period_date"] = period_dates
 
         return dataframe
 
-    def _save_imported_dataframe(self, dataframe: pd.DataFrame) -> tuple[set[str], list[date]]:
-        imported_enterprises: set[str] = set()
+    @staticmethod
+    def _normalize_import_column_name(column: object) -> str:
+        normalized_key = str(column).strip().lower().replace("ё", "е")
+        normalized_key = normalized_key.replace("₽", "").replace("%", "")
+        normalized_key = re.sub(r"[\s/\\\-.,:;()]+", "_", normalized_key)
+        normalized_key = re.sub(r"_+", "_", normalized_key).strip("_")
+        return normalized_key
+
+    @staticmethod
+    def _parse_import_period_date(value: object) -> date | None:
+        if pd.isna(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.date()
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+
+        raw_value = str(value).strip()
+        if not raw_value:
+            return None
+
+        for date_format in ("%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(raw_value, date_format).date()
+            except ValueError:
+                continue
+
+        parsed = pd.to_datetime(raw_value, errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return parsed.date()
+
+    def _find_existing_import_dates(self, dataframe: pd.DataFrame, enterprise: Enterprise) -> list[date]:
+        imported_dates = sorted({period_date for period_date in dataframe["period_date"].tolist() if period_date})
+        if not imported_dates:
+            return []
+
+        existing_records = self.repository.get_records(
+            enterprise.id,
+            start_date=min(imported_dates),
+            end_date=max(imported_dates),
+        )
+        existing_dates = {record.period_date for record in existing_records}
+        return [period_date for period_date in imported_dates if period_date in existing_dates]
+
+    @staticmethod
+    def _format_import_date_ranges(dates: list[date]) -> str:
+        if not dates:
+            return ""
+
+        sorted_dates = sorted(dates)
+        ranges: list[tuple[date, date]] = []
+        range_start = sorted_dates[0]
+        range_end = sorted_dates[0]
+
+        for current_date in sorted_dates[1:]:
+            expected_year = range_end.year + (1 if range_end.month == 12 else 0)
+            expected_month = 1 if range_end.month == 12 else range_end.month + 1
+            if current_date.year == expected_year and current_date.month == expected_month:
+                range_end = current_date
+                continue
+            ranges.append((range_start, range_end))
+            range_start = current_date
+            range_end = current_date
+
+        ranges.append((range_start, range_end))
+        return "; ".join(
+            start.strftime("%m.%Y") if start == end else f"{start.strftime('%m.%Y')}-{end.strftime('%m.%Y')}"
+            for start, end in ranges
+        )
+
+    def _save_imported_dataframe(self, dataframe: pd.DataFrame, enterprise: Enterprise) -> tuple[set[str], list[date]]:
         imported_dates: list[date] = []
+        records_to_save: list[FinancialRecord] = []
 
         for row_index, row in dataframe.iterrows():
             try:
-                enterprise_name = str(row["enterprise_name"]).strip()
-                if not enterprise_name or enterprise_name.lower() == "nan":
-                    raise ValueError("Не указано предприятие")
-
-                enterprise = self.repository.get_enterprise_by_name(enterprise_name)
-                if enterprise is None:
-                    enterprise = self.repository.add_enterprise(enterprise_name)
-
-                period_date = self.parse_date_string(str(row["period_date"]).strip())
-                if period_date is None:
-                    raise ValueError("Некорректная дата")
-
+                period_date = row["period_date"]
                 record = FinancialRecord(
                     id=None,
                     enterprise_id=enterprise.id,
@@ -836,13 +1060,13 @@ class RentabilityAnalysisApp(tk.Tk):
                     variable_expenses=float(row["variable_expenses"]),
                     tax=float(row["tax"]),
                 )
-                self.repository.upsert_record(record)
-                imported_enterprises.add(enterprise.name)
+                records_to_save.append(record)
                 imported_dates.append(period_date)
             except Exception as exc:
                 raise ValueError(f"Ошибка в строке {row_index + 2}: {exc}") from exc
 
-        return imported_enterprises, imported_dates
+        self.repository.upsert_records(records_to_save)
+        return {enterprise.name}, imported_dates
 
     def open_record_dialog(
         self,
@@ -958,8 +1182,12 @@ class RentabilityAnalysisApp(tk.Tk):
         )
 
     def on_tree_select(self, _event) -> None:
+        if self.suppress_tree_event:
+            return
         selection = self.tree.selection()
         self.selected_record_id = int(selection[0]) if selection else None
+        if self.current_records:
+            self.plot_graphs(preserve_view=True)
 
     def on_enterprise_change(self, _event) -> None:
         self.clear_statistics()
@@ -1015,6 +1243,7 @@ class RentabilityAnalysisApp(tk.Tk):
 
         ax1.set_xlim(new_x_min, new_x_max)
         ax2.set_xlim(new_x_min, new_x_max)
+        self._update_graph_x_ticks()
         self.canvas_metrics.draw_idle()
 
     def on_graph_press(self, event) -> None:
@@ -1030,6 +1259,7 @@ class RentabilityAnalysisApp(tk.Tk):
             "start_x": event.x,
             "x_min": x_min,
             "x_max": x_max,
+            "start_y": event.y,
         }
         if self.graph_widget:
             self.graph_widget.configure(cursor="fleur")
@@ -1063,9 +1293,15 @@ class RentabilityAnalysisApp(tk.Tk):
 
         ax1.set_xlim(new_x_min, new_x_max)
         ax2.set_xlim(new_x_min, new_x_max)
+        self._update_graph_x_ticks()
         self.canvas_metrics.draw_idle()
 
-    def on_graph_release(self, _event) -> None:
+    def on_graph_release(self, event) -> None:
+        if self.drag_state and event and event.x is not None and event.y is not None:
+            delta_x = abs(event.x - self.drag_state["start_x"])
+            delta_y = abs(event.y - self.drag_state["start_y"])
+            if delta_x <= 4 and delta_y <= 4 and event.xdata is not None:
+                self._select_nearest_record(event.xdata)
         self.drag_state = None
         if self.graph_widget:
             self.graph_widget.configure(cursor="hand2")
@@ -1073,3 +1309,9 @@ class RentabilityAnalysisApp(tk.Tk):
     def on_graph_leave(self, _event) -> None:
         if self.graph_widget and not self.drag_state:
             self.graph_widget.configure(cursor="arrow")
+
+    def _select_nearest_record(self, x_value: float) -> None:
+        if not self.current_records:
+            return
+        index = int(round(x_value)) - 1
+        self._select_record_by_index(index)
