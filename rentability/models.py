@@ -8,6 +8,17 @@ from datetime import date
 class Enterprise:
     id: int
     name: str
+    small_name: str | None = None
+
+
+@dataclass(slots=True)
+class FinancialReport:
+    id: int | None
+    enterprise_id: int
+    name: str
+    date_created: date
+    period_start: date
+    period_end: date
 
 
 @dataclass(slots=True)

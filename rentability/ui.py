@@ -13,7 +13,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from .analysis import summarize_ros, t_test_one_sample
-from .models import Enterprise, FinancialRecord
+from .models import Enterprise, FinancialRecord, FinancialReport
 from .repository import PostgresRepository
 
 
@@ -73,6 +73,14 @@ RECORD_FIELDS = [
     ("Налог, ₽:", "tax"),
 ]
 
+FIELD_DISPLAY_NAMES = {
+    "revenue": "Выручка",
+    "cost": "Себестоимость",
+    "fixed_expenses": "Постоянные издержки",
+    "variable_expenses": "Переменные издержки",
+    "tax": "Налог",
+}
+
 
 class RentabilityAnalysisApp(tk.Tk):
     def __init__(self, repository: PostgresRepository | None = None):
@@ -97,6 +105,7 @@ class RentabilityAnalysisApp(tk.Tk):
         self.current_enterprise: Enterprise | None = None
         self.current_records: list[FinancialRecord] = []
         self.analysis_result: dict | None = None
+        self.current_report: FinancialReport | None = None
         self.selected_record_id: int | None = None
         self.modal_overlay: tk.Toplevel | None = None
 
@@ -152,6 +161,7 @@ class RentabilityAnalysisApp(tk.Tk):
         data_actions_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
         ttk.Button(data_actions_frame, text="Добавить данные", command=self.add_data).pack(side=tk.LEFT, padx=2)
         ttk.Button(data_actions_frame, text="Редактировать", command=self.edit_data).pack(side=tk.LEFT, padx=2)
+        ttk.Button(data_actions_frame, text="Удалить данные", command=self.delete_data).pack(side=tk.LEFT, padx=2)
         ttk.Button(data_actions_frame, text="Импорт", command=self.import_data).pack(side=tk.LEFT, padx=2)
 
         results_frame = ttk.LabelFrame(parent, text="Статистические показатели")
@@ -239,6 +249,7 @@ class RentabilityAnalysisApp(tk.Tk):
         button_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
         ttk.Button(button_frame, text="Вывести данные", command=self.show_data).pack(side=tk.LEFT, padx=2)
         ttk.Button(button_frame, text="Сохранить отчёт", command=self.save_report).pack(side=tk.LEFT, padx=2)
+        ttk.Button(button_frame, text="Отчёты", command=self.show_saved_reports).pack(side=tk.LEFT, padx=2)
 
     def _create_graph_panel(self, parent: ttk.Frame) -> None:
         graph_frame = ttk.LabelFrame(parent, text="")
@@ -304,6 +315,7 @@ class RentabilityAnalysisApp(tk.Tk):
         self.selected_record_id = None
         self.current_records = []
         self.analysis_result = None
+        self.current_report = None
 
         self.results_text.config(state=tk.NORMAL)
         self.results_text.delete("1.0", tk.END)
@@ -313,6 +325,7 @@ class RentabilityAnalysisApp(tk.Tk):
 
     def clear_statistics(self) -> None:
         self.analysis_result = None
+        self.current_report = None
         self.results_text.config(state=tk.NORMAL)
         self.results_text.delete("1.0", tk.END)
         self.results_text.config(state=tk.DISABLED)
@@ -393,6 +406,12 @@ class RentabilityAnalysisApp(tk.Tk):
             self.clear_results()
             return
 
+        try:
+            self._validate_analysis_parameters()
+        except ValueError as exc:
+            messagebox.showerror("Ошибка ввода", str(exc))
+            return
+
         if self.period_mode_var.get() == "Все данные":
             start_date = None
             end_date = None
@@ -427,6 +446,7 @@ class RentabilityAnalysisApp(tk.Tk):
                 return
 
         self.current_enterprise = enterprise
+        self.clear_statistics()
         self.current_records = self.repository.get_records(enterprise.id, start_date, end_date)
         self.tree.delete(*self.tree.get_children())
 
@@ -642,12 +662,7 @@ class RentabilityAnalysisApp(tk.Tk):
             return
 
         try:
-            target_ros = float(self.target_ros_var.get())
-            alpha = float(self.alpha_var.get())
-            if not 0 < alpha < 1:
-                raise ValueError("α должен быть в диапазоне (0, 1)")
-            if target_ros < 0:
-                raise ValueError("Целевой ROS не может быть отрицательным")
+            target_ros, alpha = self._validate_analysis_parameters()
         except ValueError as exc:
             messagebox.showerror("Ошибка ввода", str(exc))
             return
@@ -712,6 +727,9 @@ class RentabilityAnalysisApp(tk.Tk):
         self.analysis_result = {
             "avg_ros": avg_ros,
             "std_ros": std_ros,
+            "min_ros": min_ros,
+            "max_ros": max_ros,
+            "avg_profit": avg_profit,
             "t_stat": t_stat,
             "p_value": p_value,
             "verdict": verdict,
@@ -719,63 +737,372 @@ class RentabilityAnalysisApp(tk.Tk):
             "target_ros": target_ros,
             "alpha": alpha,
             "enterprise": self.enterprise_var.get(),
+            "enterprise_id": self.current_enterprise.id if self.current_enterprise else None,
             "date_created": datetime.now().strftime("%d.%m.%Y"),
-            "period_start": self.period_start_var.get(),
-            "period_end": self.period_end_var.get(),
+            "period_start": self.current_records[0].period_date.strftime("%Y-%m-%d"),
+            "period_end": self.current_records[-1].period_date.strftime("%Y-%m-%d"),
         }
+        try:
+            self.current_report = self._save_current_report_to_database()
+        except psycopg.Error as exc:
+            self.current_report = None
+            messagebox.showwarning(
+                "Автосохранение отчёта",
+                "Показатели рассчитаны, но отчёт не удалось сохранить в базу данных.\n\n"
+                f"Текст ошибки: {exc}",
+            )
+            return
+        if self.current_report:
+            self.analysis_result["report_id"] = self.current_report.id
+
+    def show_saved_reports(self) -> None:
+        enterprise = self.get_selected_enterprise()
+        if not enterprise:
+            return
+
+        dialog = tk.Toplevel(self)
+        dialog.title("Сохранённые отчёты")
+        dialog.geometry("760x420")
+
+        columns = ("name", "date_created", "period_start", "period_end")
+        tree = ttk.Treeview(dialog, columns=columns, show="headings", height=14)
+        headings = {
+            "name": "Название",
+            "date_created": "Дата формирования",
+            "period_start": "Период с",
+            "period_end": "Период по",
+        }
+        widths = {
+            "name": 280,
+            "date_created": 140,
+            "period_start": 120,
+            "period_end": 120,
+        }
+        for column in columns:
+            tree.heading(column, text=headings[column])
+            tree.column(column, width=widths[column], anchor=tk.W)
+        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        def load_reports() -> None:
+            tree.delete(*tree.get_children())
+            for report in self.repository.list_financial_reports(enterprise.id):
+                tree.insert(
+                    "",
+                    tk.END,
+                    iid=str(report.id),
+                    values=(
+                        report.name,
+                        report.date_created.strftime("%d.%m.%Y"),
+                        report.period_start.strftime("%d.%m.%Y"),
+                        report.period_end.strftime("%d.%m.%Y"),
+                    ),
+                )
+
+        def get_selected_report_id() -> int | None:
+            selection = tree.selection()
+            return int(selection[0]) if selection else None
+
+        def open_report() -> None:
+            report_id = get_selected_report_id()
+            if report_id is None:
+                messagebox.showwarning("Ошибка", "Выберите отчёт")
+                return
+            self._load_saved_report(report_id)
+            self._close_modal_dialog(dialog)
+
+        def export_report() -> None:
+            report_id = get_selected_report_id()
+            if report_id is None:
+                messagebox.showwarning("Ошибка", "Выберите отчёт")
+                return
+            report = self.repository.get_financial_report(report_id)
+            if report is None:
+                messagebox.showerror("Ошибка", "Отчёт не найден")
+                return
+            metric_values = self.repository.get_financial_report_metric_values(report_id)
+            records = self.repository.get_financial_report_records(report_id)
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".html",
+                filetypes=[("HTML files", "*.html"), ("Text files", "*.txt")],
+                title="Экспорт сохранённого отчёта",
+            )
+            if not file_path:
+                return
+            report_html = self._build_analysis_report_html(
+                analysis_result=self._analysis_result_from_report(report, metric_values),
+                records=records,
+            )
+            with open(file_path, "w", encoding="utf-8") as report_file:
+                report_file.write(report_html)
+            messagebox.showinfo("Успех", f"Отчёт сохранён:\n{file_path}")
+
+        def delete_report() -> None:
+            report_id = get_selected_report_id()
+            if report_id is None:
+                messagebox.showwarning("Ошибка", "Выберите отчёт")
+                return
+            confirmed = messagebox.askyesno(
+                "Удалить отчёт",
+                "Удалить выбранный отчёт из базы данных?",
+            )
+            if not confirmed:
+                return
+            self.repository.delete_financial_report(report_id)
+            load_reports()
+
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        ttk.Button(button_frame, text="Открыть", command=open_report).pack(side=tk.LEFT, padx=4)
+        ttk.Button(button_frame, text="Экспорт HTML", command=export_report).pack(side=tk.LEFT, padx=4)
+        ttk.Button(button_frame, text="Удалить", command=delete_report).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            button_frame,
+            text="Закрыть",
+            command=lambda: self._close_modal_dialog(dialog),
+        ).pack(side=tk.RIGHT, padx=4)
+
+        load_reports()
+        self._show_modal_dialog(dialog, use_overlay=True)
 
     def save_report(self) -> None:
         if not self.analysis_result:
             messagebox.showwarning("Ошибка", "Сначала проведите проверку гипотезы")
             return
 
-        data_frame = pd.DataFrame(
-            [
-                {
-                    "Дата": record.period_date.strftime("%d.%m.%Y"),
-                    "Выручка, ₽": record.revenue,
-                    "Себестоимость, ₽": record.cost,
-                    "Пост. издержки, ₽": record.fixed_expenses,
-                    "Перем. издержки, ₽": record.variable_expenses,
-                    "Налог, ₽": record.tax,
-                    "Чистая прибыль, ₽": record.net_profit,
-                    "ROS, %": record.ros,
-                }
-                for record in self.current_records
-            ]
-        )
-        summary_frame = pd.DataFrame(
-            [
-                {
-                    "Название предприятия": self.analysis_result["enterprise"],
-                    "Дата анализа": self.analysis_result["date_created"],
-                    "Период анализа: с": self.analysis_result["period_start"],
-                    "Период анализа: по": self.analysis_result["period_end"],
-                    "Целевой уровень ROS": f'{self.analysis_result["target_ros"]}%',
-                    "Уровень значимости α": self.analysis_result["alpha"],
-                    "Средняя ROS": f'{self.analysis_result["avg_ros"]:.1f}%',
-                    "Стандартное отклонение": f'{self.analysis_result["std_ros"]:.1f}%',
-                    "t-статистика": round(self.analysis_result["t_stat"], 2),
-                    "p-уровень": round(self.analysis_result["p_value"], 3),
-                    "Вердикт гипотезы": self.analysis_result["verdict"],
-                    "Рекомендация": self.analysis_result["recommendation"],
-                }
-            ]
-        )
-
         file_path = filedialog.asksaveasfilename(
-            defaultextension=".xlsx",
-            filetypes=[("Excel files", "*.xlsx")],
+            defaultextension=".html",
+            filetypes=[("HTML files", "*.html"), ("Text files", "*.txt")],
             title="Сохранить аналитический отчёт",
         )
         if not file_path:
             return
 
-        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
-            data_frame.to_excel(writer, sheet_name="Данные", index=False)
-            summary_frame.T.to_excel(writer, sheet_name="Итоги", header=False)
+        report_html = self._build_analysis_report_html()
+        with open(file_path, "w", encoding="utf-8") as report_file:
+            report_file.write(report_html)
+
+        if self.current_enterprise and self.current_records:
+            self.repository.save_financial_report(
+                FinancialReport(
+                    id=None,
+                    enterprise_id=self.current_enterprise.id,
+                    name=f"Аналитический отчет {datetime.now().strftime('%d.%m.%Y %H:%M')}",
+                    date_created=datetime.now().date(),
+                    period_start=self.current_records[0].period_date,
+                    period_end=self.current_records[-1].period_date,
+                ),
+                {
+                    "target_ros": float(self.analysis_result["target_ros"]),
+                    "alpha": float(self.analysis_result["alpha"]),
+                    "avg_ros": float(self.analysis_result["avg_ros"]),
+                    "std_ros": float(self.analysis_result["std_ros"]),
+                    "min_ros": float(self.analysis_result["min_ros"]),
+                    "max_ros": float(self.analysis_result["max_ros"]),
+                    "avg_profit": float(self.analysis_result["avg_profit"]),
+                    "t_stat": float(self.analysis_result["t_stat"]),
+                    "p_value": float(self.analysis_result["p_value"]),
+                },
+            )
 
         messagebox.showinfo("Успех", f"Отчёт сохранён:\n{file_path}")
+
+    def _load_saved_report(self, report_id: int) -> None:
+        report = self.repository.get_financial_report(report_id)
+        if report is None:
+            messagebox.showerror("Ошибка", "Отчёт не найден")
+            return
+
+        metric_values = self.repository.get_financial_report_metric_values(report_id)
+        analysis_result = self._analysis_result_from_report(report, metric_values)
+        enterprise = next((item for item in self.repository.list_enterprises() if item.id == report.enterprise_id), None)
+        if enterprise is None:
+            messagebox.showerror("Ошибка", "Предприятие для отчёта не найдено")
+            return
+
+        self.enterprise_var.set(enterprise.name)
+        self.period_mode_var.set("Период")
+        self._update_period_mode_ui()
+        self.period_start_var.set(report.period_start.strftime("%Y-%m-%d"))
+        self.period_end_var.set(report.period_end.strftime("%Y-%m-%d"))
+        self.show_data()
+        self.analysis_result = analysis_result
+        self.render_statistics(self._statistics_lines_from_analysis_result(analysis_result))
+
+    def _validate_analysis_parameters(self) -> tuple[float, float]:
+        target_ros = float(self.target_ros_var.get())
+        alpha = float(self.alpha_var.get())
+        if not 0 < alpha < 1:
+            raise ValueError("α должен быть в диапазоне (0, 1)")
+        if target_ros < 0:
+            raise ValueError("Целевой ROS не может быть отрицательным")
+        return target_ros, alpha
+
+    def _analysis_result_from_report(self, report: FinancialReport, metric_values: dict[str, float]) -> dict:
+        alpha = float(metric_values.get("alpha", 0.05))
+        p_value = float(metric_values.get("p_value", 1.0))
+        verdict = "Не отклоняется" if p_value >= alpha else "Отклоняется"
+        recommendation = (
+            "Рекомендуется к инвестированию"
+            if p_value >= alpha
+            else "Не рекомендуется к инвестированию"
+        )
+        enterprise = next((item for item in self.repository.list_enterprises() if item.id == report.enterprise_id), None)
+        return {
+            "avg_ros": float(metric_values.get("avg_ros", 0.0)),
+            "std_ros": float(metric_values.get("std_ros", 0.0)),
+            "min_ros": float(metric_values.get("min_ros", 0.0)),
+            "max_ros": float(metric_values.get("max_ros", 0.0)),
+            "avg_profit": float(metric_values.get("avg_profit", 0.0)),
+            "t_stat": float(metric_values.get("t_stat", 0.0)),
+            "p_value": p_value,
+            "verdict": verdict,
+            "recommendation": recommendation,
+            "target_ros": float(metric_values.get("target_ros", 0.0)),
+            "alpha": alpha,
+            "enterprise": enterprise.name if enterprise else "Неизвестное предприятие",
+            "enterprise_id": report.enterprise_id,
+            "date_created": report.date_created.strftime("%d.%m.%Y"),
+            "period_start": report.period_start.strftime("%Y-%m-%d"),
+            "period_end": report.period_end.strftime("%Y-%m-%d"),
+        }
+
+    def _statistics_lines_from_analysis_result(self, analysis_result: dict) -> list[str]:
+        hypothesis_text = (
+            f"H0: средний ROS не ниже целевого уровня {analysis_result['target_ros']:.1f}%.\n"
+            f"H1: средний ROS ниже целевого уровня {analysis_result['target_ros']:.1f}%."
+        )
+        verdict_explanation = (
+            "p-уровень не меньше α, поэтому статистически недостаточно оснований считать, что средний ROS ниже целевого."
+            if analysis_result["p_value"] >= analysis_result["alpha"]
+            else "p-уровень меньше α, поэтому есть статистические основания считать, что средний ROS ниже целевого."
+        )
+        return [
+            "Статистические показатели",
+            f"Период анализа: {analysis_result['period_start']} - {analysis_result['period_end']}",
+            "",
+            "Что было рассчитано:",
+            f"Средняя чистая прибыль: {analysis_result['avg_profit']:,.0f} ₽",
+            f"Средняя ROS: {analysis_result['avg_ros']:.1f}%",
+            f"Минимальный ROS: {analysis_result['min_ros']:.1f}%",
+            f"Максимальный ROS: {analysis_result['max_ros']:.1f}%",
+            f"Стандартное отклонение ROS: {analysis_result['std_ros']:.1f}%",
+            "",
+            "Проверка гипотезы:",
+            hypothesis_text,
+            f"t-статистика: {analysis_result['t_stat']:.2f}",
+            f"p-уровень: {analysis_result['p_value']:.3f}",
+            f"Уровень значимости α: {analysis_result['alpha']:.2f}",
+            f"Вердикт: {analysis_result['verdict']}",
+            verdict_explanation,
+            "",
+            f"Практический вывод: {analysis_result['recommendation']}",
+        ]
+
+    def _build_analysis_report_html(self, analysis_result: dict | None = None, records: list[FinancialRecord] | None = None) -> str:
+        if analysis_result is None:
+            analysis_result = self.analysis_result
+        if records is None:
+            records = self.current_records
+
+        summary_rows = [
+            ("Предприятие", analysis_result["enterprise"]),
+            ("Дата анализа", analysis_result["date_created"]),
+            ("Период анализа", f'{analysis_result["period_start"]} - {analysis_result["period_end"]}'),
+            ("Целевой уровень ROS", f'{analysis_result["target_ros"]:.1f}%'),
+            ("Уровень значимости α", f'{analysis_result["alpha"]:.2f}'),
+            ("Средняя чистая прибыль", f'{analysis_result["avg_profit"]:,.0f} ₽'),
+            ("Средний ROS", f'{analysis_result["avg_ros"]:.1f}%'),
+            ("Минимальный ROS", f'{analysis_result["min_ros"]:.1f}%'),
+            ("Максимальный ROS", f'{analysis_result["max_ros"]:.1f}%'),
+            ("Стандартное отклонение ROS", f'{analysis_result["std_ros"]:.1f}%'),
+            ("t-статистика", f'{analysis_result["t_stat"]:.2f}'),
+            ("p-уровень", f'{analysis_result["p_value"]:.3f}'),
+            ("Вердикт гипотезы", analysis_result["verdict"]),
+            ("Рекомендация", analysis_result["recommendation"]),
+        ]
+
+        summary_html = "".join(
+            f"<tr><th>{label}</th><td>{value}</td></tr>"
+            for label, value in summary_rows
+        )
+
+        data_rows_html = "".join(
+            (
+                "<tr>"
+                f"<td>{record.period_date.strftime('%d.%m.%Y')}</td>"
+                f"<td>{record.revenue:,.0f}</td>"
+                f"<td>{record.cost:,.0f}</td>"
+                f"<td>{record.fixed_expenses:,.0f}</td>"
+                f"<td>{record.variable_expenses:,.0f}</td>"
+                f"<td>{record.tax:,.0f}</td>"
+                f"<td>{record.net_profit:,.0f}</td>"
+                f"<td>{record.ros:.1f}</td>"
+                "</tr>"
+            )
+            for record in records
+        )
+
+        return f"""<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Аналитический отчет</title>
+  <style>
+    body {{
+      font-family: "Segoe UI", sans-serif;
+      margin: 24px;
+      color: #1f2933;
+      background: #ffffff;
+    }}
+    h1, h2 {{
+      color: #16324f;
+    }}
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+      margin-bottom: 24px;
+    }}
+    th, td {{
+      border: 1px solid #cfd8e3;
+      padding: 8px 10px;
+      text-align: left;
+    }}
+    th {{
+      background: #eef4fa;
+    }}
+    .meta {{
+      width: 100%;
+      max-width: 760px;
+    }}
+  </style>
+</head>
+<body>
+  <h1>Аналитический отчет по оценке рентабельности</h1>
+  <h2>Рассчитанные показатели</h2>
+  <table class="meta">
+    {summary_html}
+  </table>
+  <h2>Данные по периодам</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Дата</th>
+        <th>Выручка, ₽</th>
+        <th>Себестоимость, ₽</th>
+        <th>Пост. издержки, ₽</th>
+        <th>Перем. издержки, ₽</th>
+        <th>Налог, ₽</th>
+        <th>Чистая прибыль, ₽</th>
+        <th>ROS, %</th>
+      </tr>
+    </thead>
+    <tbody>
+      {data_rows_html}
+    </tbody>
+  </table>
+</body>
+</html>
+"""
 
     def add_enterprise(self) -> None:
         dialog = tk.Toplevel(self)
@@ -821,6 +1148,38 @@ class RentabilityAnalysisApp(tk.Tk):
         enterprise = self.get_selected_enterprise()
         if enterprise:
             self.open_record_dialog(enterprise)
+
+    def delete_data(self) -> None:
+        enterprise = self.get_selected_enterprise()
+        if not enterprise or self.selected_record_id is None:
+            messagebox.showwarning("Ошибка", "Выберите строку для удаления")
+            return
+
+        record = next((item for item in self.current_records if item.id == self.selected_record_id), None)
+        if not record:
+            messagebox.showerror("Ошибка", "Данные не найдены")
+            return
+
+        confirmed = messagebox.askyesno(
+            "Удалить данные",
+            f"Удалить данные за {record.period_date.strftime('%d.%m.%Y')}?\nУдаление будет выполнено и из базы данных.",
+        )
+        if not confirmed:
+            return
+
+        try:
+            self.repository.delete_record(record.id)
+        except ValueError as exc:
+            messagebox.showerror("Ошибка", str(exc))
+            return
+        except psycopg.Error as exc:
+            messagebox.showerror("Ошибка PostgreSQL", str(exc))
+            return
+
+        self.selected_record_id = None
+        self.clear_statistics()
+        self.refresh_current_view(rerun_analysis=False)
+        messagebox.showinfo("Успех", "Данные успешно удалены")
 
     def delete_enterprise(self) -> None:
         enterprise = self.get_selected_enterprise()
@@ -1049,16 +1408,24 @@ class RentabilityAnalysisApp(tk.Tk):
 
         for row_index, row in dataframe.iterrows():
             try:
+                numeric_values = {
+                    "revenue": float(row["revenue"]),
+                    "cost": float(row["cost"]),
+                    "fixed_expenses": float(row["fixed_expenses"]),
+                    "variable_expenses": float(row["variable_expenses"]),
+                    "tax": float(row["tax"]),
+                }
+                self._validate_financial_values(numeric_values)
                 period_date = row["period_date"]
                 record = FinancialRecord(
                     id=None,
                     enterprise_id=enterprise.id,
                     period_date=period_date,
-                    revenue=float(row["revenue"]),
-                    cost=float(row["cost"]),
-                    fixed_expenses=float(row["fixed_expenses"]),
-                    variable_expenses=float(row["variable_expenses"]),
-                    tax=float(row["tax"]),
+                    revenue=numeric_values["revenue"],
+                    cost=numeric_values["cost"],
+                    fixed_expenses=numeric_values["fixed_expenses"],
+                    variable_expenses=numeric_values["variable_expenses"],
+                    tax=numeric_values["tax"],
                 )
                 records_to_save.append(record)
                 imported_dates.append(period_date)
@@ -1170,16 +1537,30 @@ class RentabilityAnalysisApp(tk.Tk):
                 except ValueError as exc:
                     raise ValueError(f"Поле {field_name} должно быть числом") from exc
 
+        numeric_values = {
+            "revenue": float(parsed["revenue"]),
+            "cost": float(parsed["cost"]),
+            "fixed_expenses": float(parsed["fixed_expenses"]),
+            "variable_expenses": float(parsed["variable_expenses"]),
+            "tax": float(parsed["tax"]),
+        }
+        self._validate_financial_values(numeric_values)
+
         return FinancialRecord(
             id=record.id if record else None,
             enterprise_id=enterprise_id,
             period_date=parsed["period_date"],
-            revenue=float(parsed["revenue"]),
-            cost=float(parsed["cost"]),
-            fixed_expenses=float(parsed["fixed_expenses"]),
-            variable_expenses=float(parsed["variable_expenses"]),
-            tax=float(parsed["tax"]),
+            revenue=numeric_values["revenue"],
+            cost=numeric_values["cost"],
+            fixed_expenses=numeric_values["fixed_expenses"],
+            variable_expenses=numeric_values["variable_expenses"],
+            tax=numeric_values["tax"],
         )
+
+    def _validate_financial_values(self, values: dict[str, float]) -> None:
+        for field_name in ("cost", "fixed_expenses", "variable_expenses", "tax"):
+            if values[field_name] < 0:
+                raise ValueError(f"{FIELD_DISPLAY_NAMES[field_name]} не может быть отрицательной")
 
     def on_tree_select(self, _event) -> None:
         if self.suppress_tree_event:
@@ -1315,3 +1696,87 @@ class RentabilityAnalysisApp(tk.Tk):
             return
         index = int(round(x_value)) - 1
         self._select_record_by_index(index)
+
+    def _report_metric_values_from_analysis(self) -> dict[str, float]:
+        if not self.analysis_result:
+            return {}
+        return {
+            "target_ros": float(self.analysis_result["target_ros"]),
+            "alpha": float(self.analysis_result["alpha"]),
+            "avg_ros": float(self.analysis_result["avg_ros"]),
+            "std_ros": float(self.analysis_result["std_ros"]),
+            "min_ros": float(self.analysis_result["min_ros"]),
+            "max_ros": float(self.analysis_result["max_ros"]),
+            "avg_profit": float(self.analysis_result["avg_profit"]),
+            "t_stat": float(self.analysis_result["t_stat"]),
+            "p_value": float(self.analysis_result["p_value"]),
+        }
+
+    def _save_current_report_to_database(self) -> FinancialReport | None:
+        if not self.analysis_result or not self.current_enterprise or not self.current_records:
+            return None
+        report = FinancialReport(
+            id=None,
+            enterprise_id=self.current_enterprise.id,
+            name=f"Аналитический отчёт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",
+            date_created=datetime.now().date(),
+            period_start=self.current_records[0].period_date,
+            period_end=self.current_records[-1].period_date,
+        )
+        return self.repository.save_financial_report(report, self._report_metric_values_from_analysis())
+
+    def save_report(self) -> None:
+        if not self.analysis_result:
+            messagebox.showwarning("Ошибка", "Сначала проведите проверку гипотезы")
+            return
+
+        if self.current_report is None:
+            try:
+                self.current_report = self._save_current_report_to_database()
+            except psycopg.Error as exc:
+                messagebox.showwarning(
+                    "Автосохранение отчёта",
+                    "Не удалось сохранить отчёт в базу данных перед экспортом.\n\n"
+                    f"Текст ошибки: {exc}",
+                )
+            else:
+                if self.current_report:
+                    self.analysis_result["report_id"] = self.current_report.id
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".html",
+            filetypes=[("HTML files", "*.html"), ("Text files", "*.txt")],
+            title="Сохранить аналитический отчёт",
+        )
+        if not file_path:
+            return
+
+        report_html = self._build_analysis_report_html()
+        with open(file_path, "w", encoding="utf-8") as report_file:
+            report_file.write(report_html)
+
+        messagebox.showinfo("Успех", f"Отчёт сохранён:\n{file_path}")
+
+    def _load_saved_report(self, report_id: int) -> None:
+        report = self.repository.get_financial_report(report_id)
+        if report is None:
+            messagebox.showerror("Ошибка", "Отчёт не найден")
+            return
+
+        metric_values = self.repository.get_financial_report_metric_values(report_id)
+        analysis_result = self._analysis_result_from_report(report, metric_values)
+        enterprise = next((item for item in self.repository.list_enterprises() if item.id == report.enterprise_id), None)
+        if enterprise is None:
+            messagebox.showerror("Ошибка", "Предприятие для отчёта не найдено")
+            return
+
+        self.enterprise_var.set(enterprise.name)
+        self.period_mode_var.set("Период")
+        self._update_period_mode_ui()
+        self.period_start_var.set(report.period_start.strftime("%Y-%m-%d"))
+        self.period_end_var.set(report.period_end.strftime("%Y-%m-%d"))
+        self.show_data()
+        self.current_report = report
+        self.analysis_result = analysis_result
+        self.analysis_result["report_id"] = report.id
+        self.render_statistics(self._statistics_lines_from_analysis_result(analysis_result))
