@@ -96,7 +96,10 @@ class PostgresRepository:
                         report_name VARCHAR(255) NOT NULL,
                         date_created DATE NOT NULL,
                         period_start DATE NOT NULL,
-                        period_end DATE NOT NULL
+                        period_end DATE NOT NULL,
+                        CONSTRAINT chk_financial_report_period CHECK (period_start <= period_end),
+                        CONSTRAINT chk_financial_report_date_created CHECK (date_created <= CURRENT_DATE),
+                        CONSTRAINT chk_financial_report_period_end CHECK (period_end <= CURRENT_DATE)
                     );
                     """
                 )
@@ -109,6 +112,7 @@ class PostgresRepository:
                         unit_id INTEGER NOT NULL REFERENCES unit(unit_id) ON DELETE RESTRICT,
                         value_date DATE NOT NULL,
                         value NUMERIC(18, 6) NOT NULL,
+                        CONSTRAINT chk_enterprise_metric_value_date CHECK (value_date <= CURRENT_DATE),
                         UNIQUE (enterprise_id, metric_id, value_date)
                     );
                     """
@@ -137,11 +141,100 @@ class PostgresRepository:
                     ON financial_report (enterprise_id, date_created DESC);
                     """
                 )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_financial_report_enterprise_period
+                    ON financial_report (enterprise_id, period_start, period_end);
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_financial_report_name
+                    ON financial_report (report_name);
+                    """
+                )
             conn.commit()
 
+        self.ensure_database_programmability()
         self.ensure_reference_data()
         self.migrate_legacy_schema()
         self.ensure_default_data()
+
+    def ensure_database_programmability(self) -> None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE OR REPLACE FUNCTION trg_validate_financial_report_dates()
+                    RETURNS TRIGGER
+                    LANGUAGE plpgsql
+                    AS $$
+                    BEGIN
+                        IF NEW.date_created > CURRENT_DATE THEN
+                            RAISE EXCEPTION 'Дата формирования отчёта не может быть в будущем';
+                        END IF;
+                        IF NEW.period_start > NEW.period_end THEN
+                            RAISE EXCEPTION 'Начало периода не может быть позже конца периода';
+                        END IF;
+                        IF NEW.period_end > CURRENT_DATE THEN
+                            RAISE EXCEPTION 'Конец периода отчёта не может быть в будущем';
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$;
+                    """
+                )
+                cur.execute("DROP TRIGGER IF EXISTS trg_financial_report_validate_dates ON financial_report;")
+                cur.execute(
+                    """
+                    CREATE TRIGGER trg_financial_report_validate_dates
+                    BEFORE INSERT OR UPDATE ON financial_report
+                    FOR EACH ROW
+                    EXECUTE FUNCTION trg_validate_financial_report_dates();
+                    """
+                )
+
+                cur.execute(
+                    """
+                    CREATE OR REPLACE FUNCTION trg_validate_enterprise_metric_value_date()
+                    RETURNS TRIGGER
+                    LANGUAGE plpgsql
+                    AS $$
+                    BEGIN
+                        IF NEW.value_date > CURRENT_DATE THEN
+                            RAISE EXCEPTION 'Дата финансовой записи не может быть в будущем';
+                        END IF;
+                        RETURN NEW;
+                    END;
+                    $$;
+                    """
+                )
+                cur.execute("DROP TRIGGER IF EXISTS trg_enterprise_metric_value_validate_date ON enterprise_metric_value;")
+                cur.execute(
+                    """
+                    CREATE TRIGGER trg_enterprise_metric_value_validate_date
+                    BEFORE INSERT OR UPDATE ON enterprise_metric_value
+                    FOR EACH ROW
+                    EXECUTE FUNCTION trg_validate_enterprise_metric_value_date();
+                    """
+                )
+
+                cur.execute(
+                    """
+                    CREATE OR REPLACE VIEW vw_financial_report_overview AS
+                    SELECT
+                        fr.report_id,
+                        fr.report_name,
+                        fr.date_created,
+                        fr.period_start,
+                        fr.period_end,
+                        e.enterprise_id,
+                        e.enterprise_name
+                    FROM financial_report fr
+                    JOIN enterprise e ON e.enterprise_id = fr.enterprise_id;
+                    """
+                )
+            conn.commit()
 
     def ensure_reference_data(self) -> None:
         with self.connection() as conn:
@@ -630,6 +723,31 @@ class PostgresRepository:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM financial_report WHERE report_id = %s", (report_id,))
             conn.commit()
+
+    def update_financial_report_name(self, report_id: int, new_name: str) -> FinancialReport | None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE financial_report
+                    SET report_name = %s
+                    WHERE report_id = %s
+                    RETURNING report_id, enterprise_id, report_name, date_created, period_start, period_end
+                    """,
+                    (new_name, report_id),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        if not row:
+            return None
+        return FinancialReport(
+            id=row[0],
+            enterprise_id=row[1],
+            name=row[2],
+            date_created=row[3],
+            period_start=row[4],
+            period_end=row[5],
+        )
 
     def get_financial_report_metric_values(self, report_id: int) -> dict[str, float]:
         with self.connection() as conn:

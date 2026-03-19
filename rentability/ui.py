@@ -303,6 +303,11 @@ class RentabilityAnalysisApp(tk.Tk):
         except ValueError:
             return None
 
+    @staticmethod
+    def _ensure_not_future_date(target_date: date, field_name: str = "Дата") -> None:
+        if target_date > date.today():
+            raise ValueError(f"{field_name} не может быть в будущем")
+
     def get_selected_enterprise(self) -> Enterprise | None:
         enterprise = self.enterprise_by_name.get(self.enterprise_var.get())
         if not enterprise:
@@ -435,6 +440,8 @@ class RentabilityAnalysisApp(tk.Tk):
                     raise ValueError("Некорректный формат даты")
                 if start_date > end_date:
                     raise ValueError("Начальная дата не может быть позже конечной")
+                self._ensure_not_future_date(start_date, "\u041d\u0430\u0447\u0430\u043b\u044c\u043d\u0430\u044f \u0434\u0430\u0442\u0430 \u043f\u0435\u0440\u0438\u043e\u0434\u0430")
+                self._ensure_not_future_date(end_date, "\u041a\u043e\u043d\u0435\u0447\u043d\u0430\u044f \u0434\u0430\u0442\u0430 \u043f\u0435\u0440\u0438\u043e\u0434\u0430")
             except ValueError as exc:
                 messagebox.showerror(
                     "Ошибка даты",
@@ -756,23 +763,47 @@ class RentabilityAnalysisApp(tk.Tk):
             self.analysis_result["report_id"] = self.current_report.id
 
     def show_saved_reports(self) -> None:
-        enterprise = self.get_selected_enterprise()
-        if not enterprise:
-            return
-
         dialog = tk.Toplevel(self)
         dialog.title("Сохранённые отчёты")
-        dialog.geometry("760x420")
+        dialog.geometry("980x560")
 
-        columns = ("name", "date_created", "period_start", "period_end")
+        toolbar = ttk.Frame(dialog)
+        toolbar.pack(fill=tk.X, padx=10, pady=(10, 4))
+
+        sort_var = tk.StringVar(value="Дата (новые сначала)")
+        ttk.Label(toolbar, text="Сортировка:").pack(side=tk.LEFT)
+        sort_combo = ttk.Combobox(
+            toolbar,
+            textvariable=sort_var,
+            state="readonly",
+            width=30,
+            values=(
+                "Дата (новые сначала)",
+                "Дата (старые сначала)",
+                "Предприятие (А-Я)",
+                "Предприятие (Я-А)",
+            ),
+        )
+        sort_combo.pack(side=tk.LEFT, padx=6)
+
+        search_frame = ttk.Frame(dialog)
+        search_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
+        ttk.Label(search_frame, text="Поиск:").pack(side=tk.LEFT)
+        search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=search_var, width=42)
+        search_entry.pack(side=tk.LEFT, padx=6)
+
+        columns = ("enterprise", "name", "date_created", "period_start", "period_end")
         tree = ttk.Treeview(dialog, columns=columns, show="headings", height=14)
         headings = {
+            "enterprise": "Предприятие",
             "name": "Название",
             "date_created": "Дата формирования",
             "period_start": "Период с",
             "period_end": "Период по",
         }
         widths = {
+            "enterprise": 220,
             "name": 280,
             "date_created": 140,
             "period_start": 120,
@@ -781,16 +812,67 @@ class RentabilityAnalysisApp(tk.Tk):
         for column in columns:
             tree.heading(column, text=headings[column])
             tree.column(column, width=widths[column], anchor=tk.W)
-        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
 
-        def load_reports() -> None:
+        rename_frame = ttk.Frame(dialog)
+        rename_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+        ttk.Label(rename_frame, text="Название отчёта:").pack(side=tk.LEFT)
+        report_name_var = tk.StringVar()
+        ttk.Entry(rename_frame, textvariable=report_name_var, width=52).pack(side=tk.LEFT, padx=6)
+
+        report_by_id: dict[int, FinancialReport] = {}
+
+        def get_sorted_reports(reports: list[FinancialReport], enterprise_names: dict[int, str]) -> list[FinancialReport]:
+            mode = sort_var.get()
+            if mode == "Дата (старые сначала)":
+                return sorted(reports, key=lambda item: (item.date_created, item.id or 0))
+            if mode == "Предприятие (А-Я)":
+                return sorted(
+                    reports,
+                    key=lambda item: (enterprise_names.get(item.enterprise_id, ""), item.date_created, item.id or 0),
+                )
+            if mode == "Предприятие (Я-А)":
+                return sorted(
+                    reports,
+                    key=lambda item: (enterprise_names.get(item.enterprise_id, ""), item.date_created, item.id or 0),
+                    reverse=True,
+                )
+            return sorted(reports, key=lambda item: (item.date_created, item.id or 0), reverse=True)
+
+        def load_reports(*_args) -> None:
+            nonlocal report_by_id
             tree.delete(*tree.get_children())
-            for report in self.repository.list_financial_reports(enterprise.id):
+
+            enterprise_names = {item.id: item.name for item in self.repository.list_enterprises()}
+            reports = self.repository.list_financial_reports()
+            reports = get_sorted_reports(reports, enterprise_names)
+
+            query = search_var.get().strip().lower()
+            if query:
+                def matches(report: FinancialReport) -> bool:
+                    enterprise_title = enterprise_names.get(report.enterprise_id, "")
+                    searchable = [
+                        enterprise_title,
+                        report.name,
+                        report.date_created.strftime("%d.%m.%Y"),
+                        report.period_start.strftime("%d.%m.%Y"),
+                        report.period_end.strftime("%d.%m.%Y"),
+                    ]
+                    return any(query in item.lower() for item in searchable)
+
+                reports = [report for report in reports if matches(report)]
+
+            report_by_id = {int(report.id): report for report in reports if report.id is not None}
+
+            for report in reports:
+                if report.id is None:
+                    continue
                 tree.insert(
                     "",
                     tk.END,
                     iid=str(report.id),
                     values=(
+                        enterprise_names.get(report.enterprise_id, "Неизвестное предприятие"),
                         report.name,
                         report.date_created.strftime("%d.%m.%Y"),
                         report.period_start.strftime("%d.%m.%Y"),
@@ -798,9 +880,42 @@ class RentabilityAnalysisApp(tk.Tk):
                     ),
                 )
 
+        def clear_search() -> None:
+            search_var.set("")
+            load_reports()
+            search_entry.focus_set()
+
+        ttk.Button(search_frame, text="Сбросить", command=clear_search).pack(side=tk.LEFT, padx=4)
+
         def get_selected_report_id() -> int | None:
             selection = tree.selection()
             return int(selection[0]) if selection else None
+
+        def on_tree_select(_event=None) -> None:
+            report_id = get_selected_report_id()
+            report = report_by_id.get(report_id) if report_id is not None else None
+            report_name_var.set(report.name if report else "")
+
+        def rename_report() -> None:
+            report_id = get_selected_report_id()
+            if report_id is None:
+                messagebox.showwarning("Ошибка", "Выберите отчёт")
+                return
+
+            new_name = report_name_var.get().strip()
+            if not new_name:
+                messagebox.showwarning("Ошибка", "Введите название отчёта")
+                return
+
+            updated = self.repository.update_financial_report_name(report_id, new_name)
+            if updated is None:
+                messagebox.showerror("Ошибка", "Отчёт не найден")
+                return
+
+            load_reports()
+            tree.selection_set(str(report_id))
+            tree.focus(str(report_id))
+            report_name_var.set(updated.name)
 
         def open_report() -> None:
             report_id = get_selected_report_id()
@@ -823,7 +938,7 @@ class RentabilityAnalysisApp(tk.Tk):
             records = self.repository.get_financial_report_records(report_id)
             file_path = filedialog.asksaveasfilename(
                 defaultextension=".html",
-                filetypes=[("HTML files", "*.html"), ("Text files", "*.txt")],
+                filetypes=[("HTML ?????", "*.html"), ("????????? ?????", "*.txt")],
                 title="Экспорт сохранённого отчёта",
             )
             if not file_path:
@@ -834,7 +949,7 @@ class RentabilityAnalysisApp(tk.Tk):
             )
             with open(file_path, "w", encoding="utf-8") as report_file:
                 report_file.write(report_html)
-            messagebox.showinfo("Успех", f"Отчёт сохранён:\n{file_path}")
+            messagebox.showinfo("?????", f"????? ????????:\n{file_path}")
 
         def delete_report() -> None:
             report_id = get_selected_report_id()
@@ -848,11 +963,13 @@ class RentabilityAnalysisApp(tk.Tk):
             if not confirmed:
                 return
             self.repository.delete_financial_report(report_id)
+            report_name_var.set("")
             load_reports()
 
         button_frame = ttk.Frame(dialog)
         button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
         ttk.Button(button_frame, text="Открыть", command=open_report).pack(side=tk.LEFT, padx=4)
+        ttk.Button(button_frame, text="Переименовать", command=rename_report).pack(side=tk.LEFT, padx=4)
         ttk.Button(button_frame, text="Экспорт HTML", command=export_report).pack(side=tk.LEFT, padx=4)
         ttk.Button(button_frame, text="Удалить", command=delete_report).pack(side=tk.LEFT, padx=4)
         ttk.Button(
@@ -860,6 +977,10 @@ class RentabilityAnalysisApp(tk.Tk):
             text="Закрыть",
             command=lambda: self._close_modal_dialog(dialog),
         ).pack(side=tk.RIGHT, padx=4)
+
+        tree.bind("<<TreeviewSelect>>", on_tree_select)
+        sort_combo.bind("<<ComboboxSelected>>", load_reports)
+        search_entry.bind("<KeyRelease>", load_reports)
 
         load_reports()
         self._show_modal_dialog(dialog, use_overlay=True)
@@ -871,7 +992,7 @@ class RentabilityAnalysisApp(tk.Tk):
 
         file_path = filedialog.asksaveasfilename(
             defaultextension=".html",
-            filetypes=[("HTML files", "*.html"), ("Text files", "*.txt")],
+                filetypes=[("HTML ?????", "*.html"), ("????????? ?????", "*.txt")],
             title="Сохранить аналитический отчёт",
         )
         if not file_path:
@@ -1325,6 +1446,11 @@ class RentabilityAnalysisApp(tk.Tk):
         invalid_rows = dataframe.index[period_dates.isna()].tolist()
         if invalid_rows:
             raise ValueError(f"Ошибка в строке {invalid_rows[0] + 2}: Некорректная дата")
+        today = date.today()
+        future_rows = dataframe.index[period_dates.apply(lambda value: value > today)].tolist()
+        if future_rows:
+            raise ValueError(f"\u041e\u0448\u0438\u0431\u043a\u0430 \u0432 \u0441\u0442\u0440\u043e\u043a\u0435 {future_rows[0] + 2}: \u0434\u0430\u0442\u0430 \u043d\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u0432 \u0431\u0443\u0434\u0443\u0449\u0435\u043c")
+
         dataframe["period_date"] = period_dates
 
         return dataframe
@@ -1506,6 +1632,8 @@ class RentabilityAnalysisApp(tk.Tk):
 
         latest_date = self.repository.get_latest_record_date(enterprise.id)
         next_date = latest_date + relativedelta(months=1) if latest_date else date(2025, 1, 1)
+        if next_date > date.today():
+            next_date = date.today()
         return {
             "period_date": next_date.strftime("%Y-%m-%d"),
             "revenue": "",
@@ -1545,6 +1673,7 @@ class RentabilityAnalysisApp(tk.Tk):
             "tax": float(parsed["tax"]),
         }
         self._validate_financial_values(numeric_values)
+        self._ensure_not_future_date(parsed["period_date"], "\u0414\u0430\u0442\u0430 \u0437\u0430\u043f\u0438\u0441\u0438")
 
         return FinancialRecord(
             id=record.id if record else None,
@@ -1718,7 +1847,7 @@ class RentabilityAnalysisApp(tk.Tk):
         report = FinancialReport(
             id=None,
             enterprise_id=self.current_enterprise.id,
-            name=f"Аналитический отчёт {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}",
+            name="\u0410\u043d\u0430\u043b\u0438\u0442\u0438\u0447\u0435\u0441\u043a\u0438\u0439 \u043e\u0442\u0447\u0451\u0442",
             date_created=datetime.now().date(),
             period_start=self.current_records[0].period_date,
             period_end=self.current_records[-1].period_date,
@@ -1745,7 +1874,7 @@ class RentabilityAnalysisApp(tk.Tk):
 
         file_path = filedialog.asksaveasfilename(
             defaultextension=".html",
-            filetypes=[("HTML files", "*.html"), ("Text files", "*.txt")],
+                filetypes=[("HTML ?????", "*.html"), ("????????? ?????", "*.txt")],
             title="Сохранить аналитический отчёт",
         )
         if not file_path:
