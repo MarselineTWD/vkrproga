@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import re
 import tkinter as tk
+import html
 from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -296,7 +297,7 @@ class RentabilityAnalysisApp(AppWindowBase):
         )
         style.configure(
             "Card.TLabelframe.Label",
-            background=COLOR_SURFACE,
+            background=COLOR_BG,
             foreground=COLOR_TEXT,
             font=("Segoe UI Semibold", 11),
         )
@@ -1681,6 +1682,9 @@ class RentabilityAnalysisApp(AppWindowBase):
         if records is None:
             records = self.current_records
 
+        def esc(value: object) -> str:
+            return html.escape(str(value))
+
         summary_rows = [
             ("Предприятие", analysis_result["enterprise"]),
             ("Дата анализа", analysis_result["date_created"]),
@@ -1695,13 +1699,9 @@ class RentabilityAnalysisApp(AppWindowBase):
             ("t-статистика", f'{analysis_result["t_stat"]:.2f}'),
             ("p-уровень", f'{analysis_result["p_value"]:.3f}'),
             ("Вердикт гипотезы", analysis_result["verdict"]),
-            ("Рекомендация", analysis_result["recommendation"]),
         ]
 
-        summary_html = "".join(
-            f"<tr><th>{label}</th><td>{value}</td></tr>"
-            for label, value in summary_rows
-        )
+        summary_html = "".join(f"<tr><th>{esc(label)}</th><td>{esc(value)}</td></tr>" for label, value in summary_rows)
 
         data_rows_html = "".join(
             (
@@ -1718,69 +1718,262 @@ class RentabilityAnalysisApp(AppWindowBase):
             )
             for record in records
         )
+        table_colgroup_html = """
+            <colgroup>
+              <col style="width: 12%;">
+              <col style="width: 14%;">
+              <col style="width: 14%;">
+              <col style="width: 14%;">
+              <col style="width: 14%;">
+              <col style="width: 12%;">
+              <col style="width: 16%;">
+              <col style="width: 8%;">
+            </colgroup>
+        """
+
+        recommendation = str(analysis_result["recommendation"])
+        recommendation_class = "badge-negative" if recommendation.lower().startswith("не ") else "badge-positive"
 
         return f"""<!DOCTYPE html>
-<html lang="ru">
+<html lang=\"ru\">
 <head>
-  <meta charset="UTF-8">
-  <title>Аналитический отчет</title>
+  <meta charset=\"UTF-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <title>Аналитический отчёт</title>
   <style>
-    body {{
-      font-family: "Segoe UI", sans-serif;
-      margin: 24px;
-      color: #1f2933;
-      background: #ffffff;
+    :root {{
+      --bg-1: #f4f8fd;
+      --bg-2: #eaf2fb;
+      --surface: #ffffff;
+      --surface-soft: #f6fafe;
+      --text: #1e3550;
+      --muted: #5f7792;
+      --primary-soft: #dceaf9;
+      --border: #d3e1ef;
+      --success: #0f8a5f;
+      --success-bg: #e6f6ef;
+      --danger: #ba3b3b;
+      --danger-bg: #fdeeee;
     }}
-    h1, h2 {{
-      color: #16324f;
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: \"Segoe UI\", \"Arial\", sans-serif;
+      color: var(--text);
+      background: linear-gradient(165deg, var(--bg-1), var(--bg-2));
+      padding: 28px 18px 36px;
+    }}
+    .page {{
+      max-width: 1160px;
+      margin: 0 auto;
+    }}
+    .hero {{
+      background: linear-gradient(135deg, #eff5fc 0%, #dfeafb 100%);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px 26px;
+      box-shadow: 0 8px 24px rgba(42, 86, 132, 0.08);
+      margin-bottom: 16px;
+    }}
+    .hero h1 {{
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: 0.2px;
+      color: #1d4269;
+    }}
+    .hero-sub {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 15px;
+    }}
+    .badge {{
+      display: inline-block;
+      margin-top: 14px;
+      padding: 9px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      border: 1px solid transparent;
+    }}
+    .badge-positive {{
+      color: var(--success);
+      background: var(--success-bg);
+      border-color: #b9e8d2;
+    }}
+    .badge-negative {{
+      color: var(--danger);
+      background: var(--danger-bg);
+      border-color: #f5c4c4;
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      margin-top: 12px;
+    }}
+    .card {{
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 6px 18px rgba(42, 86, 132, 0.08);
+      overflow: hidden;
+    }}
+    .card-head {{
+      background: var(--surface-soft);
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 16px;
+      font-weight: 700;
+      color: #1d4269;
+    }}
+    .card-body {{
+      padding: 14px 16px 16px;
     }}
     table {{
-      border-collapse: collapse;
       width: 100%;
-      margin-bottom: 24px;
+      border-collapse: separate;
+      border-spacing: 0;
     }}
     th, td {{
-      border: 1px solid #cfd8e3;
-      padding: 8px 10px;
+      padding: 10px 12px;
       text-align: left;
+      border-bottom: 1px solid #e9f0f7;
+      font-size: 14px;
     }}
-    th {{
-      background: #eef4fa;
+    .meta th {{
+      width: 42%;
+      color: #355b82;
+      font-weight: 600;
+      background: #fbfdff;
     }}
-    .meta {{
-      width: 100%;
-      max-width: 760px;
+    .meta td {{
+      color: var(--text);
+      font-weight: 500;
+    }}
+    .period-table-header {{
+      border: 1px solid #d4e3f3;
+      border-bottom: none;
+      border-radius: 10px 10px 0 0;
+      overflow: hidden;
+      background: var(--primary-soft);
+    }}
+    .period-table-header .period-table thead th {{
+      background: var(--primary-soft);
+      color: #17426e;
+      font-weight: 700;
+      white-space: nowrap;
+      border-bottom: 1px solid #c9ddf1;
+    }}
+    .period-table-body .period-table tbody td {{
+      white-space: nowrap;
+      background: #ffffff;
+    }}
+    .period-table-body .period-table tbody td:nth-child(n+2),
+    .period-table-header .period-table thead th:nth-child(n+2) {{
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }}
+    .period-table-body .period-table tbody tr:nth-child(even) {{
+      background: #fbfdff;
+    }}
+    .period-table-body .period-table tbody tr:hover {{
+      background: #f2f8ff;
+    }}
+    .period-table-body {{
+      max-height: 460px;
+      overflow: auto;
+      border: 1px solid #d4e3f3;
+      border-top: none;
+      border-radius: 0 0 10px 10px;
+      background: #ffffff;
+    }}
+    .table-wrap {{
+      overflow: hidden;
+    }}
+    .period-table {{
+      min-width: 980px;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }}
+    .footer-note {{
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: right;
+    }}
+    @media (max-width: 860px) {{
+      body {{
+        padding: 16px 10px 24px;
+      }}
+      .hero {{
+        padding: 18px 16px;
+      }}
+      .hero h1 {{
+        font-size: 24px;
+      }}
+      th, td {{
+        font-size: 13px;
+        padding: 8px 10px;
+      }}
     }}
   </style>
 </head>
 <body>
-  <h1>Аналитический отчет по оценке рентабельности</h1>
-  <h2>Рассчитанные показатели</h2>
-  <table class="meta">
-    {summary_html}
-  </table>
-  <h2>Данные по периодам</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Дата</th>
-        <th>Выручка, ₽</th>
-        <th>Себестоимость, ₽</th>
-        <th>Пост. издержки, ₽</th>
-        <th>Перем. издержки, ₽</th>
-        <th>Налог, ₽</th>
-        <th>Чистая прибыль, ₽</th>
-        <th>ROS, %</th>
-      </tr>
-    </thead>
-    <tbody>
-      {data_rows_html}
-    </tbody>
-  </table>
+  <div class=\"page\">
+    <section class=\"hero\">
+      <h1>ОРМП: оценка рентабельности малого предприятия</h1>
+      <div class=\"hero-sub\">Аналитический отчёт по финансовым показателям и проверке гипотезы</div>
+      <div class=\"badge {recommendation_class}\">Практический вывод: {esc(recommendation)}</div>
+    </section>
+
+    <div class=\"grid\">
+      <section class=\"card\">
+        <div class=\"card-head\">Рассчитанные показатели</div>
+        <div class=\"card-body\">
+          <table class=\"meta\">
+            {summary_html}
+          </table>
+        </div>
+      </section>
+
+      <section class=\"card\">
+        <div class=\"card-head\">Данные по периодам</div>
+        <div class=\"card-body table-wrap\">
+          <div class=\"period-table-header\">
+            <table class=\"period-table\">
+              {table_colgroup_html}
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th>Выручка, ₽</th>
+                  <th>Себестоимость, ₽</th>
+                  <th>Пост. издержки, ₽</th>
+                  <th>Перем. издержки, ₽</th>
+                  <th>Налог, ₽</th>
+                  <th>Чистая прибыль, ₽</th>
+                  <th>ROS, %</th>
+                </tr>
+              </thead>
+            </table>
+          </div>
+          <div class=\"period-table-body\">
+            <table class=\"period-table\">
+              {table_colgroup_html}
+              <tbody>
+                {data_rows_html}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class=\"footer-note\">Сформировано в приложении «{esc(APP_TITLE)}»</div>
+  </div>
 </body>
 </html>
 """
-
     def add_enterprise(self) -> None:
         dialog = tk.Toplevel(self)
         dialog.title("Добавить предприятие")
@@ -2015,7 +2208,7 @@ class RentabilityAnalysisApp(AppWindowBase):
     @staticmethod
     def _normalize_import_column_name(column: object) -> str:
         normalized_key = str(column).strip().lower().replace("ё", "е")
-        normalized_key = normalized_key.replace("₽", "").replace("%", "")
+        normalized_key = normalized_key.replace("₽", "").replace("в‚₽", "").replace("%", "")
         normalized_key = re.sub(r"[\s/\\\-.,:;()]+", "_", normalized_key)
         normalized_key = re.sub(r"_+", "_", normalized_key).strip("_")
         return normalized_key
@@ -2223,7 +2416,8 @@ class RentabilityAnalysisApp(AppWindowBase):
                 try:
                     parsed[field_name] = float(raw_value)
                 except ValueError as exc:
-                    raise ValueError(f"Поле {field_name} должно быть числом") from exc
+                    display_name = FIELD_DISPLAY_NAMES.get(field_name, field_name)
+                    raise ValueError(f"Поле «{display_name}» должно быть числом") from exc
 
         numeric_values = {
             "revenue": float(parsed["revenue"]),
