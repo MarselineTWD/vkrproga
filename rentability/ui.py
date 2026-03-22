@@ -42,6 +42,7 @@ TABLE_COLUMNS = (
     "Чистая прибыль, ₽",
     "ROS, %",
 )
+TABLE_COLUMN_WIDTHS = (95, 130, 140, 145, 145, 100, 140, 70)
 
 IMPORT_COLUMN_ALIASES = {
     "enterprise": "enterprise_name",
@@ -170,6 +171,14 @@ class RentabilityAnalysisApp(AppWindowBase):
         self.background_canvas: tk.Canvas | None = None
         self.background_image: tk.PhotoImage | None = None
         self.background_image_id: int | None = None
+        self.tree: ttk.Treeview | None = None
+        self.table_x_scrollbar: ttk.Scrollbar | None = None
+        self.table_x_scrollbar_visible = False
+        self._background_resize_after_id: str | None = None
+        self._table_scroll_refresh_after_id: str | None = None
+        self._last_background_size: tuple[int, int] | None = None
+        self._tree_total_columns_width = sum(TABLE_COLUMN_WIDTHS)
+        self._last_tree_viewport_width = -1
 
         self._setup_background_visual()
         self._setup_styles()
@@ -239,12 +248,23 @@ class RentabilityAnalysisApp(AppWindowBase):
             return None
 
     def _on_background_resize(self, _event=None) -> None:
+        if _event is not None and _event.widget is not self:
+            return
+        if self._background_resize_after_id is not None:
+            self.after_cancel(self._background_resize_after_id)
+        self._background_resize_after_id = self.after(16, self._apply_background_resize)
+
+    def _apply_background_resize(self) -> None:
+        self._background_resize_after_id = None
         if not self.background_canvas:
             return
         width = self.winfo_width()
         height = self.winfo_height()
         if width <= 1 or height <= 1:
             return
+        if self._last_background_size == (width, height):
+            return
+        self._last_background_size = (width, height)
         self.background_canvas.configure(width=width, height=height)
         if self.background_image_id is not None:
             self.background_canvas.coords(self.background_image_id, width // 2, height // 2)
@@ -455,6 +475,7 @@ class RentabilityAnalysisApp(AppWindowBase):
             sashrelief=tk.FLAT,
             bd=0,
             bg=COLOR_BG,
+            opaqueresize=True,
         )
         main_paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
@@ -486,8 +507,11 @@ class RentabilityAnalysisApp(AppWindowBase):
         table_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         table_frame.configure(style="Card.TLabelframe")
 
-        self.tree = ttk.Treeview(table_frame, columns=TABLE_COLUMNS, show="headings", height=12)
-        for column, width in zip(TABLE_COLUMNS, [95, 130, 140, 145, 145, 100, 140, 70]):
+        table_content = ttk.Frame(table_frame, style="CardInner.TFrame")
+        table_content.pack(fill=tk.BOTH, expand=True)
+
+        self.tree = ttk.Treeview(table_content, columns=TABLE_COLUMNS, show="headings", height=12)
+        for column, width in zip(TABLE_COLUMNS, TABLE_COLUMN_WIDTHS):
             self.tree.heading(column, text=column)
             self.tree.column(column, width=width, minwidth=width, anchor=tk.CENTER, stretch=True)
 
@@ -495,10 +519,26 @@ class RentabilityAnalysisApp(AppWindowBase):
         self.tree.tag_configure("odd", background="#ffffff")
         self.tree.tag_configure("even", background="#eef5fd")
 
-        y_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=y_scrollbar.set)
+        table_y_scroll_host = ttk.Frame(table_content, style="CardInner.TFrame", width=16)
+        table_y_scroll_host.pack(side=tk.RIGHT, fill=tk.Y)
+        table_y_scroll_host.pack_propagate(False)
+        y_scrollbar = ttk.Scrollbar(
+            table_y_scroll_host,
+            orient=tk.VERTICAL,
+            command=self.tree.yview,
+            style="Vertical.TScrollbar",
+        )
+        self.table_x_scrollbar = ttk.Scrollbar(
+            table_frame,
+            orient=tk.HORIZONTAL,
+            command=self.tree.xview,
+            style="Horizontal.TScrollbar",
+        )
+        self.tree.configure(yscrollcommand=y_scrollbar.set, xscrollcommand=self._on_tree_xscroll)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        y_scrollbar.pack(fill=tk.Y, expand=True)
+        table_content.bind("<Configure>", self._refresh_table_x_scrollbar, add="+")
+        self.after_idle(self._refresh_table_x_scrollbar)
 
         data_actions_frame = ttk.Frame(parent, style="App.TFrame")
         data_actions_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
@@ -524,8 +564,11 @@ class RentabilityAnalysisApp(AppWindowBase):
             style="QuickResult.TLabel",
         ).pack(side=tk.LEFT, padx=(10, 2))
 
+        results_content = ttk.Frame(results_frame, style="CardInner.TFrame")
+        results_content.pack(fill=tk.BOTH, expand=True)
+
         self.results_text = tk.Text(
-            results_frame,
+            results_content,
             height=11,
             font=("Segoe UI", 11),
             state=tk.DISABLED,
@@ -542,10 +585,52 @@ class RentabilityAnalysisApp(AppWindowBase):
             highlightcolor=COLOR_BORDER,
             insertbackground=COLOR_TEXT,
         )
-        results_scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL, command=self.results_text.yview)
+        results_y_scroll_host = ttk.Frame(results_content, style="CardInner.TFrame", width=16)
+        results_y_scroll_host.pack(side=tk.RIGHT, fill=tk.Y)
+        results_y_scroll_host.pack_propagate(False)
+        results_scrollbar = ttk.Scrollbar(
+            results_y_scroll_host,
+            orient=tk.VERTICAL,
+            command=self.results_text.yview,
+            style="Vertical.TScrollbar",
+        )
         self.results_text.configure(yscrollcommand=results_scrollbar.set)
         self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
-        results_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        results_scrollbar.pack(fill=tk.Y, expand=True)
+
+    def _on_tree_xscroll(self, first: str, last: str) -> None:
+        if self.table_x_scrollbar is None:
+            return
+        self.table_x_scrollbar.set(first, last)
+        self._toggle_table_x_scrollbar(float(first) > 0.0 or float(last) < 1.0)
+
+    def _toggle_table_x_scrollbar(self, show: bool) -> None:
+        if self.table_x_scrollbar is None:
+            return
+        if show and not self.table_x_scrollbar_visible:
+            self.table_x_scrollbar.pack(side=tk.BOTTOM, fill=tk.X, padx=2, pady=(0, 2))
+            self.table_x_scrollbar_visible = True
+        elif not show and self.table_x_scrollbar_visible:
+            self.table_x_scrollbar.pack_forget()
+            self.table_x_scrollbar_visible = False
+            self.table_x_scrollbar.set(0.0, 1.0)
+
+    def _refresh_table_x_scrollbar(self, _event=None) -> None:
+        if self._table_scroll_refresh_after_id is not None:
+            self.after_cancel(self._table_scroll_refresh_after_id)
+        self._table_scroll_refresh_after_id = self.after(16, self._apply_table_x_scrollbar_refresh)
+
+    def _apply_table_x_scrollbar_refresh(self) -> None:
+        self._table_scroll_refresh_after_id = None
+        if self.tree is None:
+            return
+        viewport_width = self.tree.winfo_width()
+        if viewport_width <= 1:
+            return
+        if viewport_width == self._last_tree_viewport_width:
+            return
+        self._last_tree_viewport_width = viewport_width
+        self._toggle_table_x_scrollbar(self._tree_total_columns_width > viewport_width + 2)
 
     def _create_settings_panel(self, parent: ttk.Frame) -> None:
         settings_frame = ttk.LabelFrame(parent, text="Параметры анализа")
