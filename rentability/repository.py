@@ -6,8 +6,13 @@ from datetime import date, datetime
 
 import psycopg
 
-from .default_data import DEFAULT_ENTERPRISES
-from .models import Enterprise, FinancialRecord, FinancialReport
+try:
+    from .default_data import DEFAULT_ENTERPRISES
+    from .models import Enterprise, FinancialRecord, FinancialReport
+except ImportError:
+    # Support direct script run from the package directory.
+    from default_data import DEFAULT_ENTERPRISES
+    from models import Enterprise, FinancialRecord, FinancialReport
 
 
 ENTERPRISE_METRIC_DEFINITIONS = (

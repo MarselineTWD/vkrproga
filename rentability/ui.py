@@ -448,13 +448,34 @@ class RentabilityAnalysisApp(AppWindowBase):
         root_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         root_frame.lift()
 
-        main_paned = ttk.PanedWindow(root_frame, orient=tk.HORIZONTAL, style="Main.TPanedwindow")
+        main_paned = tk.PanedWindow(
+            root_frame,
+            orient=tk.HORIZONTAL,
+            sashwidth=10,
+            sashrelief=tk.FLAT,
+            bd=0,
+            bg=COLOR_BG,
+        )
         main_paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
         left_panel = ttk.Frame(main_paned, style="App.TFrame")
         right_panel = ttk.Frame(main_paned, style="App.TFrame")
-        main_paned.add(left_panel, weight=5)
-        main_paned.add(right_panel, weight=6)
+        # Protect layout from collapsing when the splitter is dragged to edges.
+        main_paned.add(left_panel, minsize=520)
+        main_paned.add(right_panel, minsize=800)
+
+        def place_initial_sash() -> None:
+            if not main_paned.winfo_exists():
+                return
+            total_width = max(main_paned.winfo_width(), 1040)
+            sash_x = int(total_width * 5 / 11)
+            sash_x = max(520, min(total_width - 800, sash_x))
+            try:
+                main_paned.sash_place(0, sash_x, 1)
+            except tk.TclError:
+                return
+
+        self.after_idle(place_initial_sash)
 
         self._create_table_panel(left_panel)
         self._create_settings_panel(right_panel)
@@ -2628,3 +2649,16 @@ class RentabilityAnalysisApp(AppWindowBase):
         self.analysis_result = analysis_result
         self.analysis_result["report_id"] = report.id
         self.render_statistics(self._statistics_lines_from_analysis_result(analysis_result))
+
+
+if __name__ == "__main__":
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        load_dotenv = None
+
+    if load_dotenv is not None:
+        load_dotenv()
+    app = RentabilityAnalysisApp()
+    if app.winfo_exists():
+        app.mainloop()
