@@ -1,0 +1,250 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Полная блок-схема ОРМП</title>
+  <style>
+    body { margin: 0; background: #f2f5fa; font-family: "Segoe UI", Arial, sans-serif; }
+    .wrap { padding: 16px; overflow: auto; }
+    svg { background: #fff; border: 1px solid #d7dfeb; border-radius: 10px; box-shadow: 0 8px 26px rgba(22,47,89,.08); }
+    .node { fill: #fff; stroke: #2f6fb6; stroke-width: 2; }
+    .decision { fill: #f7fbff; stroke: #2f6fb6; stroke-width: 2; }
+    .startend { fill: #eaf3ff; stroke: #2f6fb6; stroke-width: 2.2; }
+    .group { fill: #f9fbfe; stroke: #b8cce5; stroke-width: 1.5; stroke-dasharray: 6 4; }
+    .txt { font-size: 14px; font-weight: 600; text-anchor: middle; dominant-baseline: middle; fill: #163255; }
+    .small { font-size: 12px; }
+    .group-title { font-size: 14px; font-weight: 700; fill: #244a72; }
+    .arrow { stroke: #355b82; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    .label { font-size: 12px; fill: #355b82; font-weight: 700; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+<svg width="1900" height="2820" viewBox="0 0 1900 2820" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Полная блок-схема программы ОРМП без пересечений стрелок и блоков">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,4 L0,8 z" fill="#355b82" />
+    </marker>
+  </defs>
+
+  <text x="950" y="34" class="txt" style="font-size:22px;">Полная блок-схема программы «ОРМП»</text>
+
+  <circle class="startend" cx="1000" cy="92" r="40"/>
+  <text class="txt" x="1000" y="92">Начало</text>
+
+  <rect class="node" x="810" y="170" width="380" height="70" rx="10"/>
+  <text class="txt" x="1000" y="205">Запуск программы</text>
+
+  <rect class="node" x="780" y="280" width="440" height="86" rx="10"/>
+  <text class="txt" x="1000" y="312">Инициализация интерфейса</text>
+  <text class="txt small" x="1000" y="336">окно, стили, обработчики событий</text>
+
+  <rect class="node" x="760" y="400" width="480" height="92" rx="10"/>
+  <text class="txt" x="1000" y="434">Подключение и инициализация БД</text>
+  <text class="txt small" x="1000" y="458">таблицы, триггеры, миграция, данные по умолчанию</text>
+
+  <polygon class="decision" points="1000,560 1170,640 1000,720 830,640"/>
+  <text class="txt" x="1000" y="635">База данных доступна?</text>
+
+  <rect class="node" x="1360" y="600" width="360" height="80" rx="10"/>
+  <text class="txt" x="1540" y="640">Показать ошибку подключения к БД</text>
+
+  <circle class="startend" cx="1540" cy="780" r="40"/>
+  <text class="txt" x="1540" y="780">Конец</text>
+
+  <rect class="node" x="730" y="790" width="540" height="92" rx="10"/>
+  <text class="txt" x="1000" y="822">Главный экран приложения</text>
+  <text class="txt small" x="1000" y="846">таблица данных, параметры, статистика, график, отчёты</text>
+
+  <polygon class="decision" points="1000,940 1170,1020 1000,1100 830,1020"/>
+  <text class="txt" x="1000" y="1016">Выбор действия пользователя</text>
+
+  <rect class="group" x="70" y="1160" width="560" height="1300" rx="14"/>
+  <text class="group-title" x="350" y="1212">Предприятия и данные</text>
+
+  <rect class="group" x="670" y="1160" width="660" height="1300" rx="14"/>
+  <text class="group-title" x="1000" y="1212">Анализ, график и отчёты</text>
+
+  <rect class="group" x="1370" y="1160" width="460" height="1300" rx="14"/>
+  <text class="group-title" x="1600" y="1204">Служебные и</text>
+  <text class="group-title" x="1600" y="1222">вспомогательные функции</text>
+
+  <rect class="node" x="110" y="1230" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="1260">Обновить список предприятий</text>
+  <text class="txt small" x="350" y="1283">получение предприятий, установка полного периода</text>
+
+  <rect class="node" x="110" y="1330" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="1360">Добавить / удалить предприятие</text>
+  <text class="txt small" x="350" y="1383">операции с карточкой предприятия</text>
+
+  <rect class="node" x="110" y="1430" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="1460">Показать данные</text>
+  <text class="txt small" x="350" y="1483">проверка периода и загрузка записей</text>
+
+  <rect class="node" x="110" y="1530" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="1560">Добавить / изменить / удалить запись</text>
+  <text class="txt small" x="350" y="1583">форма записи и операции с данными</text>
+
+  <rect class="node" x="110" y="1630" width="480" height="92" rx="10"/>
+  <text class="txt" x="350" y="1660">Импорт данных из файла</text>
+  <text class="txt small" x="350" y="1683">чтение, нормализация, проверка, сохранение</text>
+
+  <polygon class="decision" points="350,1760 500,1835 350,1910 200,1835"/>
+  <text class="txt" x="350" y="1830">Есть ошибки импорта?</text>
+
+  <rect class="node" x="110" y="1940" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="1970">Смена предприятия / режима периода</text>
+  <text class="txt small" x="350" y="1993">обновление текущего представления</text>
+
+  <rect class="node" x="110" y="2040" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="2070">Проверка корректности ввода</text>
+  <text class="txt small" x="350" y="2093">сбор и проверка финансовых значений</text>
+
+  <rect class="node" x="110" y="2140" width="480" height="80" rx="10"/>
+  <text class="txt" x="350" y="2170">Операции репозитория по данным</text>
+  <text class="txt small" x="350" y="2193">получение, добавление, изменение, удаление, обновление/вставка</text>
+
+  <rect class="node" x="110" y="2255" width="480" height="70" rx="10"/>
+  <text class="txt" x="350" y="2290">Возврат к ожиданию действий</text>
+
+  <rect class="node" x="760" y="1230" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1260">Рассчитать показатели и гипотезу</text>
+  <text class="txt small" x="1000" y="1283">среднее/СКО ROS и одновыборочный t-тест</text>
+
+  <rect class="node" x="760" y="1330" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1360">вывод статистики и практического вывода</text>
+  <text class="txt small" x="1000" y="1383">текстовый вывод результата анализа</text>
+
+  <rect class="node" x="760" y="1430" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1460">Построение графика и подписей оси X</text>
+  <text class="txt small" x="1000" y="1483">график чистой прибыли и ROS</text>
+
+  <rect class="node" x="760" y="1530" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1560">Интерактивность графика</text>
+  <text class="txt small" x="1000" y="1583">масштабирование, выбор и перетаскивание</text>
+
+  <rect class="node" x="760" y="1630" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1660">Сохранить отчёт</text>
+  <text class="txt small" x="1000" y="1683">сохранение в БД и экспорт в файл отчёта</text>
+
+  <rect class="node" x="760" y="1730" width="480" height="92" rx="10"/>
+  <text class="txt" x="1000" y="1760">Просмотреть сохранённые отчёты</text>
+  <text class="txt small" x="1000" y="1783">поиск и сортировка списка отчётов</text>
+  <text class="txt small" x="1000" y="1804">открыть, переименовать, удалить, экспортировать</text>
+
+  <rect class="node" x="760" y="1845" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1875">Загрузить сохранённый отчёт</text>
+  <text class="txt small" x="1000" y="1898">загрузка отчёта и метрик в интерфейс</text>
+
+  <rect class="node" x="760" y="1945" width="480" height="80" rx="10"/>
+  <text class="txt" x="1000" y="1975">Сформировать отчёт в файле</text>
+  <text class="txt small" x="1000" y="1998">формирование структуры файла отчёта</text>
+
+  <rect class="node" x="760" y="2058" width="480" height="70" rx="10"/>
+  <text class="txt" x="1000" y="2093">Возврат к ожиданию действий</text>
+
+  <rect class="node" x="1410" y="1230" width="380" height="80" rx="10"/>
+  <text class="txt" x="1600" y="1260">Диалоговые окна</text>
+  <text class="txt small" x="1600" y="1283">информация, предупреждение, ошибка, подтверждение</text>
+
+  <rect class="node" x="1410" y="1330" width="380" height="80" rx="10"/>
+  <text class="txt" x="1600" y="1360">Модальные окна и затемнение</text>
+  <text class="txt small" x="1600" y="1383">оформление и центрирование диалогов</text>
+
+  <rect class="node" x="1410" y="1430" width="380" height="80" rx="10"/>
+  <text class="txt" x="1600" y="1460">Фон, анимация и изменение размера</text>
+  <text class="txt small" x="1600" y="1483">плавное открытие и обновление фона</text>
+
+  <rect class="node" x="1410" y="1530" width="380" height="80" rx="10"/>
+  <text class="txt" x="1600" y="1560">Полосы прокрутки таблицы</text>
+  <text class="txt small" x="1600" y="1583">горизонтальная прокрутка и авто-показ</text>
+
+  <rect class="node" x="1410" y="1630" width="380" height="80" rx="10"/>
+  <text class="txt" x="1600" y="1660">Проверка параметров анализа</text>
+  <text class="txt small" x="1600" y="1683">проверка alpha/ROS и дат</text>
+
+  <rect class="node" x="1410" y="1730" width="380" height="92" rx="10"/>
+  <text class="txt" x="1600" y="1760">Репозиторий: отчёты и метрики</text>
+  <text class="txt small" x="1600" y="1783">сохранение, список, чтение, изменение, удаление</text>
+  <text class="txt small" x="1600" y="1804">значения метрик и записи отчёта</text>
+
+  <rect class="node" x="1410" y="1845" width="380" height="80" rx="10"/>
+  <text class="txt" x="1600" y="1875">Сброс состояния интерфейса</text>
+  <text class="txt small" x="1600" y="1898">очистка таблицы, статистики и графика</text>
+
+  <rect class="node" x="1410" y="1960" width="380" height="70" rx="10"/>
+  <text class="txt" x="1600" y="1995">Возврат к ожиданию действий</text>
+
+  <polygon class="decision" points="1000,2390 1160,2460 1000,2530 840,2460"/>
+  <text class="txt" x="1000" y="2456">Продолжить работу в приложении?</text>
+
+  <circle class="startend" cx="1000" cy="2720" r="40"/>
+  <text class="txt" x="1000" y="2720">Конец</text>
+
+  <path class="arrow" d="M1000 132 L1000 170"/>
+  <path class="arrow" d="M1000 240 L1000 280"/>
+  <path class="arrow" d="M1000 366 L1000 400"/>
+  <path class="arrow" d="M1000 492 L1000 560"/>
+
+  <path class="arrow" d="M1170 640 L1360 640"/>
+  <text class="label" x="1248" y="627">Нет</text>
+  <path class="arrow" d="M1540 680 L1540 740"/>
+
+  <path class="arrow" d="M1000 720 L1000 790"/>
+  <text class="label" x="1018" y="754">Да</text>
+  <path class="arrow" d="M1000 882 L1000 940"/>
+
+  <path class="arrow" d="M830 1020 L620 1020 L620 1170 L350 1170 L350 1230"/>
+  <text class="label" x="662" y="1002">ветка данных</text>
+
+  <path class="arrow" d="M1000 1100 L1000 1230"/>
+  <text class="label" x="1060" y="1142">ветка анализа</text>
+
+  <path class="arrow" d="M1170 1020 L1320 1020 L1320 1170 L1600 1170 L1600 1230"/>
+  <text class="label" x="1328" y="1002">ветка сервиса</text>
+
+  <path class="arrow" d="M350 1310 L350 1330"/>
+  <path class="arrow" d="M350 1410 L350 1430"/>
+  <path class="arrow" d="M350 1510 L350 1530"/>
+  <path class="arrow" d="M350 1610 L350 1630"/>
+  <path class="arrow" d="M350 1722 L350 1760"/>
+  <path class="arrow" d="M500 1835 L620 1835 L620 1980 L590 1980"/>
+  <text class="label" x="526" y="1820">Нет</text>
+  <path class="arrow" d="M350 1910 L350 1940"/>
+  <text class="label" x="366" y="1928">Да</text>
+  <path class="arrow" d="M350 2020 L350 2040"/>
+  <path class="arrow" d="M350 2120 L350 2140"/>
+  <path class="arrow" d="M350 2220 L350 2255"/>
+
+  <path class="arrow" d="M1000 1310 L1000 1330"/>
+  <path class="arrow" d="M1000 1410 L1000 1430"/>
+  <path class="arrow" d="M1000 1510 L1000 1530"/>
+  <path class="arrow" d="M1000 1610 L1000 1630"/>
+  <path class="arrow" d="M1000 1710 L1000 1730"/>
+  <path class="arrow" d="M1000 1822 L1000 1845"/>
+  <path class="arrow" d="M1000 1925 L1000 1945"/>
+  <path class="arrow" d="M1000 2025 L1000 2058"/>
+
+  <path class="arrow" d="M1600 1310 L1600 1330"/>
+  <path class="arrow" d="M1600 1410 L1600 1430"/>
+  <path class="arrow" d="M1600 1510 L1600 1530"/>
+  <path class="arrow" d="M1600 1610 L1600 1630"/>
+  <path class="arrow" d="M1600 1710 L1600 1730"/>
+  <path class="arrow" d="M1600 1822 L1600 1845"/>
+  <path class="arrow" d="M1600 1925 L1600 1960"/>
+
+  <path class="arrow" d="M350 2325 L350 2460 L840 2460"/>
+  <path class="arrow" d="M1000 2128 L1000 2390"/>
+  <path class="arrow" d="M1600 2030 L1600 2460 L1160 2460"/>
+
+  <path class="arrow" d="M840 2460 L620 2460 L620 1020 L830 1020"/>
+  <text class="label" x="634" y="2442">Да</text>
+
+  <path class="arrow" d="M1000 2530 L1000 2680"/>
+  <text class="label" x="1020" y="2605">Нет</text>
+</svg>
+</div>
+</body>
+</html>
+
