@@ -447,7 +447,6 @@ class RentabilityAnalysisApp(AppWindowBase):
         root_frame = ttk.Frame(self, style="App.TFrame")
         root_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
         root_frame.lift()
-        self._create_hero_banner(root_frame)
 
         main_paned = ttk.PanedWindow(root_frame, orient=tk.HORIZONTAL, style="Main.TPanedwindow")
         main_paned.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
@@ -1731,9 +1730,6 @@ class RentabilityAnalysisApp(AppWindowBase):
             </colgroup>
         """
 
-        recommendation = str(analysis_result["recommendation"])
-        recommendation_class = "badge-negative" if recommendation.lower().startswith("не ") else "badge-positive"
-
         return f"""<!DOCTYPE html>
 <html lang=\"ru\">
 <head>
@@ -1767,51 +1763,10 @@ class RentabilityAnalysisApp(AppWindowBase):
       max-width: 1160px;
       margin: 0 auto;
     }}
-    .hero {{
-      background: linear-gradient(135deg, #eff5fc 0%, #dfeafb 100%);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 24px 26px;
-      box-shadow: 0 8px 24px rgba(42, 86, 132, 0.08);
-      margin-bottom: 16px;
-    }}
-    .hero h1 {{
-      margin: 0;
-      font-size: 30px;
-      line-height: 1.2;
-      letter-spacing: 0.2px;
-      color: #1d4269;
-    }}
-    .hero-sub {{
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 15px;
-    }}
-    .badge {{
-      display: inline-block;
-      margin-top: 14px;
-      padding: 9px 14px;
-      border-radius: 999px;
-      font-size: 13px;
-      font-weight: 700;
-      letter-spacing: 0.3px;
-      border: 1px solid transparent;
-    }}
-    .badge-positive {{
-      color: var(--success);
-      background: var(--success-bg);
-      border-color: #b9e8d2;
-    }}
-    .badge-negative {{
-      color: var(--danger);
-      background: var(--danger-bg);
-      border-color: #f5c4c4;
-    }}
     .grid {{
       display: grid;
       grid-template-columns: 1fr;
       gap: 14px;
-      margin-top: 12px;
     }}
     .card {{
       background: var(--surface);
@@ -1907,12 +1862,6 @@ class RentabilityAnalysisApp(AppWindowBase):
       body {{
         padding: 16px 10px 24px;
       }}
-      .hero {{
-        padding: 18px 16px;
-      }}
-      .hero h1 {{
-        font-size: 24px;
-      }}
       th, td {{
         font-size: 13px;
         padding: 8px 10px;
@@ -1922,12 +1871,6 @@ class RentabilityAnalysisApp(AppWindowBase):
 </head>
 <body>
   <div class=\"page\">
-    <section class=\"hero\">
-      <h1>ОРМП: оценка рентабельности малого предприятия</h1>
-      <div class=\"hero-sub\">Аналитический отчёт по финансовым показателям и проверке гипотезы</div>
-      <div class=\"badge {recommendation_class}\">Практический вывод: {esc(recommendation)}</div>
-    </section>
-
     <div class=\"grid\">
       <section class=\"card\">
         <div class=\"card-head\">Рассчитанные показатели</div>
